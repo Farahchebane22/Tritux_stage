@@ -1,0 +1,191 @@
+[
+  {
+    "id": "kb001",
+    "intent": "vpn_connexion",
+    "title": "VPN ne se connecte pas",
+    "keywords": ["vpn", "openvpn", "connexion vpn", "tunnel", "forticlient"],
+    "category": "network",
+    "self_fixable": true,
+    "steps": [
+      "Vérifier que vous êtes bien connecté à Internet (ouvrir google.com).",
+      "Redémarrer le client VPN Tritux (OpenVPN / FortiClient).",
+      "Vérifier la date/heure Windows (certificat invalide si horloge fausse).",
+      "Essayer un autre réseau (partage 4G) pour exclure un firewall local.",
+      "Si échec: créer un ticket avec le message d'erreur exact."
+    ],
+    "answer": "Dans la plupart des cas, un redémarrage du client VPN et la vérification de l'horloge système résolvent le problème. Si le certificat est expiré, un agent devra vous en reprovisionner un."
+  },
+  {
+    "id": "kb002",
+    "intent": "mot_de_passe_oublie",
+    "title": "Mot de passe oublié / expiré",
+    "keywords": ["mot de passe", "password", "mdp", "expiré", "oublié", "reset", "sso"],
+    "category": "account",
+    "self_fixable": true,
+    "steps": [
+      "Aller sur le portail self-service Tritux (réinitialisation SSO).",
+      "Choisir 'Mot de passe oublié' et suivre le lien reçu par SMS/email de secours.",
+      "Choisir un mot de passe d'au moins 12 caractères (majuscule, chiffre, symbole).",
+      "Se reconnecter à Windows puis à Office 365.",
+      "Si le compte est verrouillé: patienter 15 min ou contacter le helpdesk."
+    ],
+    "answer": "Vous pouvez réinitialiser votre mot de passe via le self-service SSO sans ticket. Un ticket n'est nécessaire que si le compte est verrouillé ou si vous n'avez plus d'email/SMS de récupération."
+  },
+  {
+    "id": "kb003",
+    "intent": "phishing",
+    "title": "Email de phishing",
+    "keywords": ["phishing", "suspect", "lien", "arnaque", "usurpation", "spam dangereux"],
+    "category": "security",
+    "self_fixable": true,
+    "steps": [
+      "Ne cliquez sur aucun lien et n'ouvrez aucune pièce jointe.",
+      "Ne saisissez jamais votre mot de passe Tritux hors des sites officiels.",
+      "Signalez le message via le bouton 'Signaler un phishing' d'Outlook.",
+      "Si vous avez déjà cliqué: déconnectez-vous, changez le mot de passe immédiatement, activez/vérifiez la MFA.",
+      "Ouvrez un ticket sécurité Urgent avec l'expéditeur et l'heure."
+    ],
+    "answer": "Ne cliquez pas. Signalez le mail. Si vous avez interagi avec le lien, changez immédiatement votre mot de passe et ouvrez un ticket sécurité Urgent."
+  },
+  {
+    "id": "kb004",
+    "intent": "outlook_crash",
+    "title": "Outlook ne démarre / plante",
+    "keywords": ["outlook", "plante", "crash", "0x8004010f", "messagerie"],
+    "category": "software",
+    "self_fixable": true,
+    "steps": [
+      "Fermer Outlook complètement (Gestionnaire des tâches).",
+      "Lancer Outlook en mode sans échec: Win+R puis outlook.exe /safe.",
+      "Si OK en safe mode: désactiver les modules complémentaires COM.",
+      "Réparer Office: Paramètres Windows > Applications > Microsoft 365 > Réparer.",
+      "Sinon: créer un ticket avec la version d'Outlook et le code d'erreur."
+    ],
+    "answer": "Le mode sans échec et la réparation Office corrigent la majorité des plantages Outlook. Un nouveau profil mail peut être nécessaire si le fichier OST est corrompu."
+  },
+  {
+    "id": "kb005",
+    "intent": "teams_audio",
+    "title": "Problème audio / caméra Teams",
+    "keywords": ["teams", "micro", "caméra", "webcam", "audio", "réunion"],
+    "category": "software",
+    "self_fixable": true,
+    "steps": [
+      "Vérifier Paramètres Windows > Confidentialité > Micro/Caméra (autoriser apps desktop).",
+      "Dans Teams: Paramètres > Appareils > tester le micro et la caméra.",
+      "Sélectionner le bon périphérique (pas 'Digital Output').",
+      "Quitter Teams (icône barre des tâches > Quitter) puis relancer.",
+      "Effacer le cache Teams si le problème persiste."
+    ],
+    "answer": "La plupart des problèmes audio/vidéo Teams viennent des permissions Windows ou d'un mauvais périphérique sélectionné. Testez dans les paramètres Appareils de Teams."
+  },
+  {
+    "id": "kb006",
+    "intent": "wifi_reseau",
+    "title": "Pas d'Internet / Wi-Fi instable",
+    "keywords": ["wifi", "internet", "réseau", "connexion", "dns", "proxy"],
+    "category": "network",
+    "self_fixable": true,
+    "steps": [
+      "Basculer Airplane mode ON/OFF ou redémarrer la carte Wi-Fi.",
+      "Oublier le réseau Tritux-WiFi puis se reconnecter.",
+      "Tester un câble Ethernet pour isoler le Wi-Fi.",
+      "Exécuter: ipconfig /flushdns puis renew DHCP.",
+      "Si plusieurs collègues impactés: ticket réseau (problème d'infrastructure)."
+    ],
+    "answer": "Commencez par reconnecter le Wi-Fi et flush DNS. Si plusieurs personnes sont touchées au même étage, c'est probablement une borne/switch: ouvrez un ticket réseau."
+  },
+  {
+    "id": "kb007",
+    "intent": "imprimante",
+    "title": "Imprimante hors ligne",
+    "keywords": ["imprimante", "imprimer", "print", "spooler", "toner"],
+    "category": "hardware",
+    "self_fixable": true,
+    "steps": [
+      "Vérifier que l'imprimante est allumée et connectée au réseau.",
+      "Supprimer les travaux bloqués dans la file d'attente.",
+      "Redémarrer le service 'Spouleur d'impression' (services.msc).",
+      "Retirer/réajouter l'imprimante depuis \\printserver\\...",
+      "Si pages blanches: vérifier toner/tambour."
+    ],
+    "answer": "Videz la file d'attente et redémarrez le spouleur. Si l'imprimante est offline pour tout le service, contactez le support avec le nom de l'imprimante."
+  },
+  {
+    "id": "kb008",
+    "intent": "mfa",
+    "title": "MFA / Authenticator ne marche pas",
+    "keywords": ["mfa", "authenticator", "double authentification", "otp", "2fa"],
+    "category": "security",
+    "self_fixable": false,
+    "steps": [
+      "Vérifier que l'heure automatique est activée sur le téléphone.",
+      "Essayer un code de secours MFA si vous en avez.",
+      "Si téléphone perdu: un agent identité doit réenregistrer votre MFA.",
+      "Préparez une pièce d'identité pour la vérification."
+    ],
+    "answer": "Si votre téléphone MFA est perdu ou désynchronisé, le self-service est limité: un agent devra réinitialiser votre méthode MFA après vérification d'identité."
+  },
+  {
+    "id": "kb009",
+    "intent": "onedrive_sync",
+    "title": "OneDrive ne synchronise pas",
+    "keywords": ["onedrive", "sync", "synchronisation", "cloud", "fichiers"],
+    "category": "software",
+    "self_fixable": true,
+    "steps": [
+      "Vérifier l'espace disque local et le quota OneDrive.",
+      "Cliquer sur l'icône OneDrive > Pause > Reprendre.",
+      "Se déconnecter puis reconnecter au compte Tritux.",
+      "Unlink OneDrive puis relier le dossier si nécessaire.",
+      "Éviter les chemins de fichiers trop longs (>250 caractères)."
+    ],
+    "answer": "Pause/Reprise et une reconnexion du compte résolvent souvent la sync OneDrive. Vérifiez aussi le quota cloud."
+  },
+  {
+    "id": "kb010",
+    "intent": "compte_verrouille",
+    "title": "Compte verrouillé",
+    "keywords": ["verrouillé", "lock", "locked", "trop de tentatives", "bloque"],
+    "category": "account",
+    "self_fixable": false,
+    "steps": [
+      "Arrêter les tentatives de connexion (sinon le timer repart).",
+      "Attendre 15 minutes (déverrouillage automatique possible).",
+      "Sinon ouvrir un ticket Compte Priorité Haute.",
+      "Préciser l'heure exacte et l'application (Windows/VPN/Office)."
+    ],
+    "answer": "Un compte verrouillé nécessite souvent une action agent (unlock AD). Évitez de retenter le mauvais mot de passe en boucle."
+  },
+  {
+    "id": "kb011",
+    "intent": "ecran_hardware",
+    "title": "Écran / dock / affichage",
+    "keywords": ["écran", "moniteur", "dock", "hdmi", "scintille", "affichage"],
+    "category": "hardware",
+    "self_fixable": true,
+    "steps": [
+      "Tester un autre câble HDMI/DisplayPort.",
+      "Brancher l'écran directement au PC (sans dock).",
+      "Mettre à jour les pilotes GPU / chipset.",
+      "Tester un autre moniteur pour isoler la panne.",
+      "Si dock en cause: ticket matériel avec modèle du dock."
+    ],
+    "answer": "Isolez le problème: câble vs dock vs écran. Beaucoup de cas se résolvent en changeant le câble ou en mettant à jour les pilotes."
+  },
+  {
+    "id": "kb012",
+    "intent": "licence_office",
+    "title": "Licence Office / produit non activé",
+    "keywords": ["licence", "office", "activé", "365", "product unlicensed"],
+    "category": "software",
+    "self_fixable": true,
+    "steps": [
+      "Se connecter à Office avec votre compte prenom.nom@tritux.com.",
+      "Fichier > Compte > Mettre à jour la licence.",
+      "Fermer toutes les apps Office puis relancer.",
+      "Si toujours non licencié: ticket logiciel (provisioning M365)."
+    ],
+    "answer": "Reconnectez votre compte professionnel dans Office. Si la licence n'apparaît pas, le compte n'est peut-être pas provisionné correctement."
+  }
+]

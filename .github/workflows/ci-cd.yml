@@ -1,0 +1,125 @@
+name: Tritux Ticketing Platform CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  # 1. Continuous Integration (Lint, Typecheck, Build Test)
+  ci-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: './frontend/package-lock.json'
+
+      - name: Install Frontend Dependencies
+        run: |
+          cd frontend
+          npm ci || npm install
+
+      - name: Check Types
+        run: |
+          cd frontend
+          npx vue-tsc --noEmit
+
+      - name: Build Frontend
+        run: |
+          cd frontend
+          npm run build
+
+  ci-backend-services:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+
+      - name: Validate API Gateway
+        run: |
+          cd backend/api-gateway
+          npm install
+
+      - name: Validate User Service
+        run: |
+          cd backend/user-service
+          npm install
+
+      - name: Validate Ticket Service
+        run: |
+          cd backend/ticket-service
+          npm install
+
+  ci-python-ai:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Validate AI Service Requirements
+        run: |
+          cd backend/ai-service
+          pip install -r requirements.txt
+
+  # 2. Build Docker Images & Simulate Push/Deployment
+  docker-build-push:
+    needs: [ci-frontend, ci-backend-services, ci-python-ai]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: actions/setup-buildx-action@v2
+
+      - name: Build Frontend Image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./frontend
+          push: false
+          tags: tritux/ticketing-frontend:latest
+
+      - name: Build API Gateway Image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./backend/api-gateway
+          push: false
+          tags: tritux/api-gateway:latest
+
+      - name: Build User Service Image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./backend/user-service
+          push: false
+          tags: tritux/user-service:latest
+
+      - name: Build Ticket Service Image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./backend/ticket-service
+          push: false
+          tags: tritux/ticket-service:latest
+
+      - name: Build AI Service Image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./backend/ai-service
+          push: false
+          tags: tritux/ai-service:latest

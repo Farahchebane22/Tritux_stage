@@ -1,0 +1,111 @@
+@import 'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap';
+@import 'tailwindcss';
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 4px);
+  --radius-xl: calc(var(--radius) + 8px);
+
+  /* Semantic status colors */
+  --color-status-open: var(--status-open);
+  --color-status-inprogress: var(--status-inprogress);
+  --color-status-resolved: var(--status-resolved);
+  --color-status-closed: var(--status-closed);
+
+  /* Semantic priority colors */
+  --color-priority-low: var(--priority-low);
+  --color-priority-medium: var(--priority-medium);
+  --color-priority-high: var(--priority-high);
+  --color-priority-urgent: var(--priority-urgent);
+
+  /* Tritux brand colors */
+  --color-tritux-blue: #1D4ED8;
+  --color-tritux-violet: #7C3AED;
+  --color-tritux-turquoise: #0D9488;
+  --color-tritux-rose: #E11D48;
+
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-display: 'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+:root {
+  --background: #F1F5F9;
+  --foreground: #0F172A;
+  --card: #FFFFFF;
+  --card-foreground: #0F172A;
+  --primary: #1D4ED8;
+  --primary-foreground: #FFFFFF;
+  --secondary: #EFF6FF;
+  --secondary-foreground: #1E40AF;
+  --muted: #F8FAFC;
+  --muted-foreground: #64748B;
+  --accent: #7C3AED;
+  --accent-foreground: #FFFFFF;
+  --border: #E2E8F0;
+  --ring: #3B82F6;
+  --radius: 8px;
+
+  --status-open: #94A3B8;
+  --status-inprogress: #3B82F6;
+  --status-resolved: #10B981;
+  --status-closed: #475569;
+
+  --priority-low: #10B981;
+  --priority-medium: #F59E0B;
+  --priority-high: #F97316;
+  --priority-urgent: #EF4444;
+
+  --sidebar-bg: #0F172A;
+  --sidebar-fg: #94A3B8;
+  --sidebar-active: #1E40AF;
+  --sidebar-active-fg: #FFFFFF;
+  --sidebar-hover: rgba(255, 255, 255, 0.06);
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-sans);
+  background-color: var(--background);
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+
+/* Custom scrollbar in sidebar */
+.sidebar-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); }
+
+/* Font application */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+}
+
+.font-mono, code, pre {
+  font-family: var(--font-mono);
+}

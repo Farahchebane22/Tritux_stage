@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+**/node_modules/
+.pnpm-store/
+
+# Build
+dist/
+build/
+*.local
+
+# Env
+.env
+.env.*
+!.env.example
+backend/ai-service/.env
+
+# Uploads / runtime
+backend/ticket-service/uploads/
+**/__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Keep trained AI models in repo (pkl + metrics), ignore caches only
+backend/ai-service/**/__pycache__/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.log
+.cursor/
+
+# Figma Make leftovers (if any reappear)
+.figma/
