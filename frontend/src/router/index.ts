@@ -8,6 +8,7 @@ import CreateTicketView from '../views/CreateTicketView.vue';
 import TicketDetailView from '../views/TicketDetailView.vue';
 import NotificationsView from '../views/NotificationsView.vue';
 import ProfileView from '../views/ProfileView.vue';
+import CyberAnalyzeView from '../views/CyberAnalyzeView.vue';
 
 const routes = [
   {
@@ -38,6 +39,12 @@ const routes = [
     path: '/tickets/:id',
     name: 'ticket-detail',
     component: TicketDetailView,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/security',
+    name: 'security',
+    component: CyberAnalyzeView,
     meta: { requiresAuth: true }
   },
   {

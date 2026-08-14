@@ -109,7 +109,8 @@ import {
   Plus as PlusIcon,
   LogOut as LogOutIcon,
   Settings as SettingsIcon,
-  ChevronRight as ChevronRightIcon
+  ChevronRight as ChevronRightIcon,
+  ShieldAlert as ShieldAlertIcon
 } from 'lucide-vue-next';
 
 const router = useRouter();
@@ -132,6 +133,7 @@ const initials = computed(() => {
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboardIcon, path: '/' },
   { id: 'tickets', label: 'Tickets', icon: TicketIcon, path: '/tickets' },
+  { id: 'security', label: 'Analyse cyber', icon: ShieldAlertIcon, path: '/security' },
   { id: 'notifications', label: 'Notifications', icon: BellIcon, path: '/notifications' },
   { id: 'profile', label: 'Profil', icon: UserIcon, path: '/profile' }
 ];
@@ -151,6 +153,7 @@ const roleColors: Record<string, string> = {
 const isActive = (id: string) => {
   if (id === 'dashboard') return route.path === '/';
   if (id === 'tickets') return route.path.startsWith('/tickets');
+  if (id === 'security') return route.path === '/security';
   if (id === 'notifications') return route.path === '/notifications';
   if (id === 'profile') return route.path === '/profile';
   return false;
@@ -159,6 +162,7 @@ const isActive = (id: string) => {
 const navigate = (id: string) => {
   if (id === 'dashboard') router.push('/');
   else if (id === 'tickets') router.push('/tickets');
+  else if (id === 'security') router.push('/security');
   else if (id === 'notifications') router.push('/notifications');
   else if (id === 'profile') router.push('/profile');
   else if (id === 'create-ticket') router.push('/tickets/create');

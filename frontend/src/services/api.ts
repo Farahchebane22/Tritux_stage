@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import axios from 'axios';
-import type { Ticket, TicketStatus, TicketPriority, TicketCategory, Comment, Notification, User } from '../types';
+import type { Ticket, TicketStatus, TicketPriority, TicketCategory, Comment, Notification, User, CyberAnalysis } from '../types';
 import { splitAgentsByCategory } from '../utils/agentCategories';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
@@ -188,6 +188,15 @@ export const apiService = {
       '/ai/chat',
       { message, history },
       { timeout: 90000 }
+    );
+    return response.data;
+  },
+
+  async analyzeCyber(content: string): Promise<CyberAnalysis> {
+    const response = await api.post(
+      '/ai/cyber/analyze',
+      { content },
+      { timeout: 60000 }
     );
     return response.data;
   }

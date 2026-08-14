@@ -73,7 +73,7 @@
           <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
             <div>
               <h3 class="font-display font-bold text-slate-900">Informations du compte</h3>
-              <p class="text-xs text-slate-500 mt-0.5">Nom, email et département</p>
+              <p class="text-xs text-slate-500 mt-0.5">Nom et email (le département est géré par l’IT)</p>
             </div>
             <div class="flex items-center gap-2">
               <button
@@ -138,21 +138,13 @@
               <label class="block text-xs font-semibold text-slate-600 mb-1.5">Département</label>
               <div class="relative">
                 <Building2Icon :size="14" class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                <select
-                  v-if="editing"
-                  v-model="form.department"
-                  class="w-full pl-10 pr-3.5 py-2.5 rounded-xl text-sm border border-slate-200 text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 appearance-none"
-                >
-                  <option value="">Sélectionner…</option>
-                  <option v-for="d in departments" :key="d" :value="d">{{ d }}</option>
-                </select>
                 <input
-                  v-else
                   :value="form.department || '—'"
                   disabled
                   class="w-full pl-10 pr-3.5 py-2.5 rounded-xl text-sm border border-slate-200 bg-slate-50 text-slate-500 cursor-not-allowed"
                 />
               </div>
+              <p class="text-[11px] text-slate-400 mt-1.5">Le département ne peut pas être modifié depuis le profil.</p>
             </div>
 
             <div>
@@ -278,16 +270,6 @@ const passwordForm = reactive({
   confirm: ''
 });
 
-const departments = [
-  'Finance',
-  'Marketing',
-  'RH',
-  'Commercial',
-  'IT Support',
-  'Direction',
-  'Autre'
-];
-
 const roleLabels: Record<string, string> = {
   user: 'Utilisateur standard',
   agent: 'Agent IT',
@@ -360,7 +342,11 @@ const toggleEdit = async () => {
   saving.value = true;
   profileMessage.value = '';
   try {
-    await authStore.updateProfile(form.name.trim(), form.email.trim(), form.department);
+    await authStore.updateProfile(
+      form.name.trim(),
+      form.email.trim(),
+      currentUser.value?.department || ''
+    );
     profileError.value = false;
     profileMessage.value = 'Profil enregistré. Les changements resteront après déconnexion.';
     editing.value = false;

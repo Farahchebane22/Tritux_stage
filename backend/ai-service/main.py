@@ -9,11 +9,12 @@ from pydantic import BaseModel, Field
 
 from llm_client import llm_client
 from ml_engine import engine
+from cyber_engine import analyze_cyber
 
 app = FastAPI(
     title="Tritux AI Assistant",
-    description="Classification ML + chatbot conversationnel (Gemini/OpenAI)",
-    version="3.0.0",
+    description="Classification ML + chatbot + analyse cyber (Gemini/OpenAI)",
+    version="3.1.0",
 )
 
 app.add_middleware(
@@ -63,6 +64,26 @@ class ChatResponse(BaseModel):
     provider: Optional[str] = None
 
 
+class CyberAnalyzeRequest(BaseModel):
+    content: str = Field(..., min_length=10, max_length=8000)
+
+
+class CyberAnalyzeResponse(BaseModel):
+    riskLevel: str
+    riskScore: int
+    threatType: str
+    threatLabel: str
+    priority: str
+    confidence: int
+    summary: str
+    indicators: list[str] = []
+    immediateActions: list[str] = []
+    suggestTicket: bool = True
+    urls: list[str] = []
+    provider: Optional[str] = None
+    category: str = "security"
+
+
 @app.get("/health")
 async def health_check() -> dict[str, Any]:
     return {
@@ -101,6 +122,12 @@ async def chat(request: ChatRequest) -> ChatResponse:
     history = [{"role": m.role, "content": m.content} for m in request.history]
     result = await engine.chat_async(request.message, history)
     return ChatResponse(**result)
+
+
+@app.post("/cyber/analyze", response_model=CyberAnalyzeResponse)
+async def cyber_analyze(request: CyberAnalyzeRequest) -> CyberAnalyzeResponse:
+    result = await analyze_cyber(request.content)
+    return CyberAnalyzeResponse(**result)
 
 
 if __name__ == "__main__":

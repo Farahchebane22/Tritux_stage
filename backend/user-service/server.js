@@ -329,9 +329,9 @@ async function getProfile(req, res) {
   }
 }
 
-// Persist profile changes (fixes logout data loss)
+// Persist profile changes (fixes logout data loss). Department is read-only (admin/RH only).
 app.put('/profile', authenticateToken, async (req, res) => {
-  const { name, email, department } = req.body;
+  const { name, email } = req.body;
 
   if (!name || !String(name).trim()) {
     return res.status(400).json({ message: 'Le nom est requis' });
@@ -342,7 +342,6 @@ app.put('/profile', authenticateToken, async (req, res) => {
 
   const cleanName = String(name).trim();
   const cleanEmail = String(email).trim().toLowerCase();
-  const cleanDept = department != null ? String(department).trim() : '';
 
   try {
     const current = await findUserById(req.user.id);
@@ -360,14 +359,14 @@ app.put('/profile', authenticateToken, async (req, res) => {
     if (useMock) {
       current.name = cleanName;
       current.email = cleanEmail;
-      current.department = cleanDept;
+      // department intentionally unchanged
       const user = await enrichUser(current);
       return res.json({ user, token: signToken(user) });
     }
 
     await pool.query(
-      'UPDATE users SET name = ?, email = ?, department = ? WHERE id = ?',
-      [cleanName, cleanEmail, cleanDept || null, req.user.id]
+      'UPDATE users SET name = ?, email = ? WHERE id = ?',
+      [cleanName, cleanEmail, req.user.id]
     );
 
     const updated = await findUserById(req.user.id);

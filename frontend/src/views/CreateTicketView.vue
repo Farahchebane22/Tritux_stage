@@ -311,8 +311,13 @@ let aiTimeout: ReturnType<typeof setTimeout> | null = null;
 
 onMounted(() => {
   const prefill = route.query.prefill;
+  const qTitle = route.query.title;
   if (typeof prefill === 'string' && prefill.trim()) {
     description.value = prefill.trim();
+  }
+  if (typeof qTitle === 'string' && qTitle.trim()) {
+    title.value = qTitle.trim().slice(0, 120);
+  } else if (typeof prefill === 'string' && prefill.trim()) {
     title.value = prefill.trim().slice(0, 80);
   }
   const cat = route.query.category;

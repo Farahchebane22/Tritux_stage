@@ -4,6 +4,24 @@ export type TicketCategory = 'hardware' | 'software' | 'network' | 'account' | '
 export type UserRole = 'user' | 'agent' | 'admin';
 export type NotificationType = 'new_ticket' | 'status_change' | 'new_comment' | 'assignment';
 
+export type CyberRiskLevel = 'low' | 'medium' | 'high' | 'critical';
+
+export interface CyberAnalysis {
+  riskLevel: CyberRiskLevel;
+  riskScore: number;
+  threatType: string;
+  threatLabel: string;
+  priority: TicketPriority;
+  confidence: number;
+  summary: string;
+  indicators: string[];
+  immediateActions: string[];
+  suggestTicket: boolean;
+  urls: string[];
+  provider?: string | null;
+  category: 'security';
+}
+
 export interface User {
   id: string;
   name: string;
