@@ -3,10 +3,15 @@ import cors from 'cors';
 import jwt from 'jsonwebtoken';
 import mysql from 'mysql2/promise';
 import bcrypt from 'bcryptjs';
+import {
+  authenticateToken,
+  mapLegacyRole,
+  JWT_SECRET as SHARED_JWT_SECRET,
+} from '../shared/auth.js';
 
 const app = express();
 const PORT = process.env.PORT || 5001;
-const JWT_SECRET = process.env.JWT_SECRET || 'tritux_secret_key_12345';
+const JWT_SECRET = process.env.JWT_SECRET || SHARED_JWT_SECRET || 'tritux_secret_key_12345';
 
 app.use(cors());
 app.use(express.json());
@@ -94,9 +99,11 @@ function mapUserRow(row, stats = {}) {
     id: row.id,
     name: row.name,
     email: row.email,
-    role: row.role,
+    role: mapLegacyRole(row.role),
     department: row.department || '',
     joinDate: row.joinDate,
+    societeId: row.societe_id || row.societeId || null,
+    keycloakId: row.keycloak_id || row.keycloakId || null,
     ticketsCreated: stats.ticketsCreated ?? row.ticketsCreated ?? 0,
     ticketsResolved: stats.ticketsResolved ?? row.ticketsResolved ?? 0
   };
@@ -161,24 +168,17 @@ async function enrichUser(row) {
 
 function signToken(user) {
   return jwt.sign(
-    { id: user.id, email: user.email, role: user.role, name: user.name },
+    {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      name: user.name,
+      societeId: user.societeId || null,
+      keycloakId: user.keycloakId || null,
+    },
     JWT_SECRET,
     { expiresIn: '24h' }
   );
-}
-
-function authenticateToken(req, res, next) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) {
-    return res.status(401).json({ message: 'Non autorisé — token manquant' });
-  }
-  const token = authHeader.split(' ')[1];
-  try {
-    req.user = jwt.verify(token, JWT_SECRET);
-    next();
-  } catch {
-    return res.status(401).json({ message: 'Session invalide ou expirée' });
-  }
 }
 
 async function initDb() {
@@ -196,6 +196,17 @@ async function initDb() {
         // ignore if already exists
       }
     }
+    for (const col of [
+      "ALTER TABLE users ADD COLUMN societe_id VARCHAR(50) NULL",
+      "ALTER TABLE users ADD COLUMN keycloak_id VARCHAR(100) NULL",
+      "ALTER TABLE users ADD COLUMN specialties VARCHAR(255) NULL",
+    ]) {
+      try {
+        await conn.query(col);
+      } catch {
+        /* column may exist */
+      }
+    }
     conn.release();
     useMock = false;
   } catch (error) {
@@ -208,6 +219,78 @@ async function initDb() {
 }
 
 initDb();
+
+/**
+ * Synchronise un utilisateur Keycloak avec MySQL (premier login / refresh).
+ * Body: { keycloakId, email, name, role?, societeId? }
+ */
+app.post('/auth/keycloak-sync', authenticateToken, async (req, res) => {
+  try {
+    const keycloakId = req.user.keycloakId || req.user.id || req.body.keycloakId;
+    const email = (req.body.email || req.user.email || '').toLowerCase();
+    const name = req.body.name || req.user.name || email;
+    const role = mapLegacyRole(req.body.role || req.user.role || 'CLIENT_USER');
+    const societeId = req.body.societeId || req.user.societeId || null;
+
+    if (!email) return res.status(400).json({ message: 'Email requis' });
+
+    let row = await findUserByEmail(email);
+    if (!row && keycloakId && !useMock) {
+      const [byKc] = await pool.query('SELECT * FROM users WHERE keycloak_id = ?', [keycloakId]);
+      row = byKc[0] || null;
+    }
+
+    if (!row) {
+      const id = `u_${Date.now()}`;
+      const joinDate = new Date().toISOString().split('T')[0];
+      if (useMock) {
+        row = {
+          id,
+          name,
+          email,
+          role,
+          department: '',
+          joinDate,
+          societe_id: societeId,
+          keycloak_id: keycloakId,
+          ticketsCreated: 0,
+          ticketsResolved: 0,
+        };
+        mockUsers.push(row);
+      } else {
+        await pool.query(
+          `INSERT INTO users (id, name, email, role, department, joinDate, societe_id, keycloak_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [id, name, email, role, null, joinDate, societeId, keycloakId]
+        );
+        row = await findUserById(id);
+      }
+    } else {
+      if (useMock) {
+        row.keycloak_id = keycloakId;
+        row.keycloakId = keycloakId;
+        if (societeId) row.societe_id = societeId;
+        row.role = role;
+        row.name = name;
+      } else {
+        await pool.query(
+          `UPDATE users SET keycloak_id = COALESCE(?, keycloak_id),
+           societe_id = COALESCE(?, societe_id),
+           name = ?, role = ? WHERE id = ?`,
+          [keycloakId, societeId, name, role, row.id]
+        );
+        row = await findUserById(row.id);
+      }
+    }
+
+    const user = await enrichUser(row);
+    // Also issue a legacy token for services that still accept HS256 (optional bridge)
+    const token = signToken(user);
+    res.json({ user, token });
+  } catch (err) {
+    res.status(500).json({ message: 'Sync Keycloak échouée', error: err.message });
+  }
+});
 
 app.post('/login', async (req, res) => {
   const { email, password } = req.body;

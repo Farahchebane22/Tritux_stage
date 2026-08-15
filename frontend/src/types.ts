@@ -1,7 +1,7 @@
 export type TicketStatus = 'open' | 'inprogress' | 'resolved' | 'closed';
 export type TicketPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type TicketCategory = 'hardware' | 'software' | 'network' | 'account' | 'email' | 'security' | 'other';
-export type UserRole = 'user' | 'agent' | 'admin';
+export type UserRole = 'user' | 'agent' | 'admin' | 'SUPER_ADMIN' | 'AGENT_IT' | 'CLIENT_ADMIN' | 'CLIENT_USER';
 export type NotificationType = 'new_ticket' | 'status_change' | 'new_comment' | 'assignment';
 
 export type CyberRiskLevel = 'low' | 'medium' | 'high' | 'critical';
@@ -31,6 +31,8 @@ export interface User {
   department?: string;
   /** Domaines / catégories IT dont l'agent est spécialiste */
   specialties?: TicketCategory[];
+  societeId?: string | null;
+  keycloakId?: string | null;
   joinDate: string;
   ticketsCreated?: number;
   ticketsResolved?: number;
@@ -88,6 +90,12 @@ export interface Ticket {
   history: HistoryEntry[];
   aiSuggestion?: AISuggestion;
   satisfactionRating?: { score: number; comment: string };
+  societeId?: string | null;
+  applicationId?: string | null;
+  contratId?: string | null;
+  slaDeadline?: string | null;
+  slaDeferred?: boolean;
+  slaResumeAt?: string | null;
 }
 
 export interface Notification {

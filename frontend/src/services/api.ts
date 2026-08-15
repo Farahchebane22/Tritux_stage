@@ -199,5 +199,52 @@ export const apiService = {
       { timeout: 60000 }
     );
     return response.data;
-  }
+  },
+
+  async syncKeycloakUser(payload: {
+    email: string;
+    name: string;
+    role?: string;
+    societeId?: string | null;
+    keycloakId?: string;
+  }): Promise<{ user: User; token?: string }> {
+    const response = await api.post('/users/auth/keycloak-sync', payload);
+    if (response.data.token) localStorage.setItem('token', response.data.token);
+    return {
+      user: response.data.user || response.data,
+      token: response.data.token,
+    };
+  },
+
+  async getContractAccessStatus(sessionId: string) {
+    const response = await api.get('/contracts/access/status', {
+      params: { sessionId },
+      headers: { 'x-session-id': sessionId },
+    });
+    return response.data;
+  },
+
+  async acknowledgeContract(contratId: string, sessionId: string) {
+    const response = await api.post('/contracts/access/acknowledge', {
+      contratId,
+      sessionId,
+    });
+    return response.data;
+  },
+
+  async generateReport(societeId: string, periodeDebut: string, periodeFin: string) {
+    const response = await api.post('/reports/generate', {
+      societeId,
+      periodeDebut,
+      periodeFin,
+    });
+    return response.data;
+  },
+
+  async listReports(societeId?: string) {
+    const response = await api.get('/reports', {
+      params: societeId ? { societeId } : undefined,
+    });
+    return response.data;
+  },
 };

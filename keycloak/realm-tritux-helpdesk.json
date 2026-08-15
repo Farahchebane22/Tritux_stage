@@ -1,0 +1,97 @@
+{
+  "realm": "tritux-helpdesk",
+  "enabled": true,
+  "displayName": "Tritux Helpdesk SaaS",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "sslRequired": "external",
+  "roles": {
+    "realm": [
+      { "name": "super-admin", "description": "Administrateur Tritux (plateforme complète)" },
+      { "name": "agent-it", "description": "Agent IT Tritux" },
+      { "name": "client-admin", "description": "Administrateur société cliente" },
+      { "name": "client-user", "description": "Utilisateur société cliente" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "tritux-frontend",
+      "name": "Tritux Frontend SPA",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "redirectUris": [
+        "http://localhost:5173/*",
+        "http://localhost:8080/*",
+        "http://localhost:3000/*",
+        "*"
+      ],
+      "webOrigins": ["+", "*"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocol": "openid-connect"
+    },
+    {
+      "clientId": "tritux-backend",
+      "name": "Tritux Backend API",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "tritux-backend-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "protocol": "openid-connect"
+    }
+  ],
+  "users": [
+    {
+      "username": "admin@tritux.com",
+      "email": "admin@tritux.com",
+      "firstName": "Admin",
+      "lastName": "Tritux",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "admin123", "temporary": false }],
+      "realmRoles": ["super-admin"],
+      "attributes": { "societe_id": [""] }
+    },
+    {
+      "username": "leila.mansour@tritux.com",
+      "email": "leila.mansour@tritux.com",
+      "firstName": "Leila",
+      "lastName": "Mansour",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "agent123", "temporary": false }],
+      "realmRoles": ["agent-it"]
+    },
+    {
+      "username": "nour.benali@acme.tn",
+      "email": "nour.benali@acme.tn",
+      "firstName": "Nour",
+      "lastName": "Ben Ali",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "client123", "temporary": false }],
+      "realmRoles": ["client-admin"],
+      "attributes": { "societe_id": ["soc_demo"] }
+    },
+    {
+      "username": "sami.belhadj@tritux.com",
+      "email": "sami.belhadj@tritux.com",
+      "firstName": "Sami",
+      "lastName": "Belhadj",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "user123", "temporary": false }],
+      "realmRoles": ["client-user"],
+      "attributes": { "societe_id": ["soc_demo"] }
+    }
+  ]
+}

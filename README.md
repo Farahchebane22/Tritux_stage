@@ -1,58 +1,151 @@
-# Tritux IT Helpdesk
+# Tritux Helpdesk — SaaS B2B multi-clients + SLA
 
-Plateforme de gestion des tickets IT (Vue 3 + microservices Node.js + FastAPI + MySQL).
+Plateforme de gestion de tickets IT (Vue 3 + microservices Node.js + FastAPI + MySQL + Keycloak),
+étendue en **offre publique** : sociétés clientes sous **contrat de maintenance**, accès conditionné par **SLA**.
 
-## Structure
+## Architecture
 
 ```
-frontend/          # Application Vue.js 3 (UI)
+landing/                 Site vitrine public (:3000 Docker)
+frontend/                App Vue 3 protégée (:5173 / :8080)
 backend/
-  api-gateway/     # Port 5000
-  user-service/    # Port 5001
-  ticket-service/  # Port 5002
-  ai-service/      # Port 8000 (Python)
-database/          # init.sql (schéma MySQL)
-docker-compose.yml
-.github/workflows/ # Pipeline CI/CD
+  api-gateway/           :5000
+  user-service/          :5001 — users, sync Keycloak
+  ticket-service/        :5002 — tickets + appel SLA
+  contract-service/      :5003 — contrats, gate, moteur SLA  ← NOUVEAU
+  report-service/        :5004 — rapports archivés           ← NOUVEAU
+  shared/auth.js         JWT Keycloak + fallback legacy
+ai-service/              :8000 — ML + chatbot + cyber
+keycloak/                Realm tritux-helpdesk (:8081)
+database/init.sql        Schéma multi-tenant + seeds
 ```
 
-## Démarrage local
+## Fonctionnalités conservées
 
-### 1. Base de données (XAMPP)
+Tickets, commentaires, pièces jointes, notifications, satisfaction, chatbot IA, analyse cyber,
+affectation par spécialité — **toujours actives**.
 
-1. Démarrer **Apache + MySQL** dans XAMPP  
-2. Importer `database/init.sql` dans phpMyAdmin (base `tritux_db`)  
-3. User app : `tritux_user` / `tritux_password`
+## Nouveautés SaaS
 
-### 2. Backend (4 terminaux)
+| Module | Description |
+|--------|-------------|
+| Multi-tenant | `societes`, `applications`, `contrats_maintenance`, `sla_regles` |
+| Keycloak | OIDC + PKCE (`tritux-frontend`), rôles `super-admin`, `agent-it`, `client-admin`, `client-user` |
+| Gate contrat | Clients sans contrat → écran blocage ; avec contrat → récap obligatoire |
+| Moteur SLA | Deadline, différé hors fenêtre, escalade mock (SMS/tél) |
+| Rapports | Génération + archive par société (`/reports`) |
+| Landing | `landing/index.html` + route `/welcome` |
+
+## Variables d'environnement
+
+### Frontend (`frontend/.env`)
+
+```env
+VITE_API_URL=http://localhost:5000/api
+VITE_KEYCLOAK_ENABLED=false          # true pour SSO Keycloak
+VITE_KEYCLOAK_URL=http://localhost:8081
+VITE_KEYCLOAK_REALM=tritux-helpdesk
+VITE_KEYCLOAK_CLIENT_ID=tritux-frontend
+```
+
+### Backend (tous services Node)
+
+```env
+JWT_SECRET=tritux_secret_key_12345
+KEYCLOAK_ENABLED=true                # false = JWT legacy uniquement
+KEYCLOAK_URL=http://localhost:8081   # en Docker: http://keycloak:8080
+KEYCLOAK_REALM=tritux-helpdesk
+DB_HOST=localhost
+DB_USER=tritux_user
+DB_PASSWORD=tritux_password
+DB_NAME=tritux_db
+CONTRACT_SERVICE_URL=http://localhost:5003   # ticket-service
+```
+
+## Démarrage local (sans Keycloak — défaut)
+
+1. XAMPP MySQL → importer `database/init.sql` (ou `migrate_saas.sql` si BDD déjà créée)
+2. Backends :
 
 ```powershell
-cd backend\user-service; npm start
-cd backend\ticket-service; npm start
+cd backend\user-service; npm install; npm start
+cd backend\ticket-service; npm install; npm start
+cd backend\contract-service; npm install; npm start
+cd backend\report-service; npm install; npm start
 cd backend\api-gateway; npm start
 cd backend\ai-service; python main.py
 ```
 
-### 3. Frontend
+3. Frontend :
 
 ```powershell
 cd frontend
 npm install
+# garder VITE_KEYCLOAK_ENABLED=false
 npm run dev
 ```
 
-→ http://localhost:5173
+→ App : http://localhost:5173/welcome  
+→ Landing statique : ouvrir `landing/index.html`
 
-## Comptes démo
+### Comptes démo (login legacy)
 
 | Email | Rôle |
 |-------|------|
-| sami.belhadj@tritux.com | user |
-| leila.mansour@tritux.com | agent |
-| admin@tritux.com | admin |
+| admin@tritux.com | SUPER_ADMIN |
+| leila.mansour@tritux.com | AGENT_IT |
+| nour.benali@acme.tn | CLIENT_ADMIN (soc Acme + contrat 5/7) |
+| sami.belhadj@tritux.com | CLIENT_USER (soc Acme) |
 
-## Docker (optionnel)
+## Keycloak (optionnel)
+
+```powershell
+docker compose up keycloak -d
+```
+
+Console admin : http://localhost:8081 (`admin` / `admin`)  
+Realm importé : `tritux-helpdesk`
+
+Puis dans `frontend/.env` :
+
+```env
+VITE_KEYCLOAK_ENABLED=true
+```
+
+Comptes seed Keycloak (voir `keycloak/realm-tritux-helpdesk.json`) :
+
+| User | Password | Rôle |
+|------|----------|------|
+| admin@tritux.com | admin123 | super-admin |
+| leila.mansour@tritux.com | agent123 | agent-it |
+| nour.benali@acme.tn | client123 | client-admin |
+| sami.belhadj@tritux.com | user123 | client-user |
+
+## Docker complet
 
 ```powershell
 docker compose up --build
 ```
+
+- App : http://localhost:8080  
+- Landing : http://localhost:3000  
+- Keycloak : http://localhost:8081  
+- API : http://localhost:5000  
+
+## Flux client (contrat)
+
+1. Auth Keycloak / legacy  
+2. `GET /api/contracts/access/status`  
+3. Pas de contrat → `/contract/none`  
+4. Contrat actif → `/contract/recap` → ack journalisé → dashboard  
+5. Création ticket → `POST /api/contracts/sla/evaluate` → `sla_deadline` / badge différé  
+
+## Notification urgente (mock)
+
+Interface : `NotificationService.sendUrgentAlert` dans `contract-service`  
+Remplacer le mock par Twilio / SMS plus tard sans changer le contrat d’appel.
+
+## Phase cloud
+
+CI/CD : `.github/workflows/ci-cd.yml`  
+Déploiement AWS : Phase 4 du cahier des charges (inchangé).

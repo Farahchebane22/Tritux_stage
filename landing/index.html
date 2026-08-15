@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tritux Helpdesk — Maintenance IT &amp; SLA</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Fraunces:opsz,wght@9..144,600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #0f172a;
+      --muted: #64748b;
+      --accent: #1d4ed8;
+      --accent-2: #0ea5e9;
+      --surface: #f8fafc;
+      --card: #ffffff;
+      --border: #e2e8f0;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "DM Sans", system-ui, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(ellipse 80% 50% at 10% -10%, #dbeafe 0%, transparent 55%),
+        radial-gradient(ellipse 60% 40% at 100% 0%, #e0f2fe 0%, transparent 50%),
+        var(--surface);
+      min-height: 100vh;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1.25rem 5vw;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    .brand { font-family: Fraunces, Georgia, serif; font-weight: 700; font-size: 1.25rem; }
+    .brand span { color: var(--accent); }
+    nav a {
+      margin-left: 1rem;
+      text-decoration: none;
+      color: var(--muted);
+      font-size: 0.9rem;
+      font-weight: 500;
+    }
+    nav a.btn {
+      background: var(--ink);
+      color: #fff;
+      padding: 0.55rem 1rem;
+      border-radius: 0.6rem;
+    }
+    .hero {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 4rem 5vw 3rem;
+      display: grid;
+      gap: 2rem;
+    }
+    h1 {
+      font-family: Fraunces, Georgia, serif;
+      font-size: clamp(2.2rem, 5vw, 3.4rem);
+      line-height: 1.1;
+      margin: 0 0 1rem;
+      max-width: 16ch;
+    }
+    .lead { color: var(--muted); font-size: 1.1rem; max-width: 42ch; line-height: 1.6; }
+    .cta { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 1.75rem; }
+    .cta a {
+      text-decoration: none;
+      padding: 0.75rem 1.25rem;
+      border-radius: 0.7rem;
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+    .cta .primary { background: linear-gradient(135deg, var(--accent), #7c3aed); color: #fff; }
+    .cta .ghost { border: 1px solid var(--border); color: var(--ink); background: var(--card); }
+    .plans {
+      max-width: 1100px;
+      margin: 0 auto 4rem;
+      padding: 0 5vw;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1rem;
+    }
+    .plan {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 1rem;
+      padding: 1.35rem;
+    }
+    .plan h3 { margin: 0 0 0.35rem; font-family: Fraunces, serif; }
+    .plan p { margin: 0; color: var(--muted); font-size: 0.9rem; line-height: 1.5; }
+    .plan ul { margin: 0.85rem 0 0; padding-left: 1.1rem; color: var(--ink); font-size: 0.88rem; }
+    footer {
+      text-align: center;
+      padding: 2rem;
+      color: var(--muted);
+      font-size: 0.8rem;
+      border-top: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">Tritux <span>Helpdesk</span></div>
+    <nav>
+      <a href="#offres">Offres</a>
+      <a href="mailto:commercial@tritux.com">Nous contacter</a>
+      <a class="btn" id="loginBtn" href="http://localhost:5173/login">Se connecter</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <div>
+      <h1>Maintenance IT sous contrat, avec SLA mesurable</h1>
+      <p class="lead">
+        Tritux Helpdesk est la plateforme SaaS B2B qui permet à vos équipes et applications
+        de déposer, suivre et prioriser les tickets IT selon le niveau de service de votre contrat.
+      </p>
+      <div class="cta">
+        <a class="primary" id="loginCta" href="http://localhost:5173/login">Se connecter</a>
+        <a class="ghost" href="mailto:commercial@tritux.com?subject=Demande%20contrat%20maintenance%20Tritux">Nous contacter</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="plans" id="offres">
+    <article class="plan">
+      <h3>8/5</h3>
+      <p>Couverture jours ouvrés, fenêtre horaire standard.</p>
+      <ul>
+        <li>Lundi–vendredi</li>
+        <li>SLA par priorité</li>
+        <li>Portail tickets + IA</li>
+      </ul>
+    </article>
+    <article class="plan">
+      <h3>5/7</h3>
+      <p>Support étendu en semaine, idéal pour la plupart des PME.</p>
+      <ul>
+        <li>Escalade urgente en heures ouvrées</li>
+        <li>Traitement différé hors fenêtre</li>
+        <li>Rapports périodiques</li>
+      </ul>
+    </article>
+    <article class="plan">
+      <h3>24/7</h3>
+      <p>Couverture continue pour les systèmes critiques.</p>
+      <ul>
+        <li>Notification immédiate (SMS / téléphone)</li>
+        <li>SLA renforcés</li>
+        <li>Analyse cyber incluse</li>
+      </ul>
+    </article>
+  </section>
+
+  <footer>
+    © Tritux Groupe — Offre maintenance IT · commercial@tritux.com · +216 71 000 111
+  </footer>
+
+  <script>
+    // Si l'app Vue tourne, pointer vers la route publique /welcome
+    const appBase = localStorage.getItem('TRITUX_APP_URL') || 'http://localhost:5173';
+    document.getElementById('loginBtn').href = appBase + '/login';
+    document.getElementById('loginCta').href = appBase + '/login';
+  </script>
+</body>
+</html>

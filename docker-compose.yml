@@ -1,7 +1,6 @@
 version: '3.8'
 
 services:
-  # 1. MySQL Database
   mysql-db:
     image: mysql:8.0
     container_name: tritux-mysql
@@ -22,7 +21,19 @@ services:
       timeout: 5s
       retries: 5
 
-  # 2. AI Assistant Service (FastAPI)
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: tritux-keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HTTP_PORT: 8080
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./keycloak/realm-tritux-helpdesk.json:/opt/keycloak/data/import/realm-tritux-helpdesk.json
+
   ai-service:
     build:
       context: ./backend/ai-service
@@ -30,21 +41,26 @@ services:
     restart: always
     ports:
       - "8000:8000"
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # 3. User Service
   user-service:
     build:
-      context: ./backend/user-service
+      context: ./backend
+      dockerfile: user-service/Dockerfile
     container_name: tritux-user-service
     restart: always
     environment:
       PORT: 5001
       JWT_SECRET: tritux_secret_key_12345
+      KEYCLOAK_ENABLED: "true"
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: tritux-helpdesk
       DB_HOST: mysql-db
       DB_USER: tritux_user
       DB_PASSWORD: tritux_password
@@ -55,15 +71,19 @@ services:
       mysql-db:
         condition: service_healthy
 
-  # 4. Ticket Service
   ticket-service:
     build:
-      context: ./backend/ticket-service
+      context: ./backend
+      dockerfile: ticket-service/Dockerfile
     container_name: tritux-ticket-service
     restart: always
     environment:
       PORT: 5002
       JWT_SECRET: tritux_secret_key_12345
+      KEYCLOAK_ENABLED: "true"
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: tritux-helpdesk
+      CONTRACT_SERVICE_URL: http://contract-service:5003
       DB_HOST: mysql-db
       DB_USER: tritux_user
       DB_PASSWORD: tritux_password
@@ -73,8 +93,53 @@ services:
     depends_on:
       mysql-db:
         condition: service_healthy
+      contract-service:
+        condition: service_started
 
-  # 5. API Gateway
+  contract-service:
+    build:
+      context: ./backend
+      dockerfile: contract-service/Dockerfile
+    container_name: tritux-contract-service
+    restart: always
+    environment:
+      PORT: 5003
+      JWT_SECRET: tritux_secret_key_12345
+      KEYCLOAK_ENABLED: "true"
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: tritux-helpdesk
+      DB_HOST: mysql-db
+      DB_USER: tritux_user
+      DB_PASSWORD: tritux_password
+      DB_NAME: tritux_db
+    ports:
+      - "5003:5003"
+    depends_on:
+      mysql-db:
+        condition: service_healthy
+
+  report-service:
+    build:
+      context: ./backend
+      dockerfile: report-service/Dockerfile
+    container_name: tritux-report-service
+    restart: always
+    environment:
+      PORT: 5004
+      JWT_SECRET: tritux_secret_key_12345
+      KEYCLOAK_ENABLED: "true"
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: tritux-helpdesk
+      DB_HOST: mysql-db
+      DB_USER: tritux_user
+      DB_PASSWORD: tritux_password
+      DB_NAME: tritux_db
+    ports:
+      - "5004:5004"
+    depends_on:
+      mysql-db:
+        condition: service_healthy
+
   api-gateway:
     build:
       context: ./backend/api-gateway
@@ -84,26 +149,42 @@ services:
       PORT: 5000
       USER_SERVICE_URL: http://user-service:5001
       TICKET_SERVICE_URL: http://ticket-service:5002
+      CONTRACT_SERVICE_URL: http://contract-service:5003
+      REPORT_SERVICE_URL: http://report-service:5004
       AI_SERVICE_URL: http://ai-service:8000
     ports:
       - "5000:5000"
     depends_on:
       - user-service
       - ticket-service
+      - contract-service
+      - report-service
       - ai-service
 
-  # 6. Frontend Web Application (Vue.js 3 + Nginx)
   frontend:
     build:
       context: ./frontend
       args:
         VITE_API_URL: http://localhost:5000/api
+        VITE_KEYCLOAK_ENABLED: "true"
+        VITE_KEYCLOAK_URL: http://localhost:8081
+        VITE_KEYCLOAK_REALM: tritux-helpdesk
+        VITE_KEYCLOAK_CLIENT_ID: tritux-frontend
     container_name: tritux-frontend
     restart: always
     ports:
       - "8080:80"
     depends_on:
       - api-gateway
+      - keycloak
+
+  landing:
+    image: nginx:alpine
+    container_name: tritux-landing
+    ports:
+      - "3000:80"
+    volumes:
+      - ./landing:/usr/share/nginx/html:ro
 
 volumes:
   mysql-data:

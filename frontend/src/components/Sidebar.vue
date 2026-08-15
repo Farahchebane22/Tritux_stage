@@ -56,7 +56,7 @@
       </button>
 
       <button
-        v-if="currentUser.role === 'admin'"
+        v-if="currentUser.role === 'admin' || currentUser.role === 'SUPER_ADMIN'"
         @click="navigate('tickets')"
         class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-150 cursor-pointer"
         style="color: var(--sidebar-fg)"
@@ -110,7 +110,8 @@ import {
   LogOut as LogOutIcon,
   Settings as SettingsIcon,
   ChevronRight as ChevronRightIcon,
-  ShieldAlert as ShieldAlertIcon
+  ShieldAlert as ShieldAlertIcon,
+  FileBarChart as FileBarChartIcon
 } from 'lucide-vue-next';
 
 const router = useRouter();
@@ -134,6 +135,7 @@ const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboardIcon, path: '/' },
   { id: 'tickets', label: 'Tickets', icon: TicketIcon, path: '/tickets' },
   { id: 'security', label: 'Analyse cyber', icon: ShieldAlertIcon, path: '/security' },
+  { id: 'reports', label: 'Rapports', icon: FileBarChartIcon, path: '/reports' },
   { id: 'notifications', label: 'Notifications', icon: BellIcon, path: '/notifications' },
   { id: 'profile', label: 'Profil', icon: UserIcon, path: '/profile' }
 ];
@@ -154,6 +156,7 @@ const isActive = (id: string) => {
   if (id === 'dashboard') return route.path === '/';
   if (id === 'tickets') return route.path.startsWith('/tickets');
   if (id === 'security') return route.path === '/security';
+  if (id === 'reports') return route.path === '/reports';
   if (id === 'notifications') return route.path === '/notifications';
   if (id === 'profile') return route.path === '/profile';
   return false;
@@ -163,6 +166,7 @@ const navigate = (id: string) => {
   if (id === 'dashboard') router.push('/');
   else if (id === 'tickets') router.push('/tickets');
   else if (id === 'security') router.push('/security');
+  else if (id === 'reports') router.push('/reports');
   else if (id === 'notifications') router.push('/notifications');
   else if (id === 'profile') router.push('/profile');
   else if (id === 'create-ticket') router.push('/tickets/create');

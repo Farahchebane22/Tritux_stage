@@ -22,6 +22,21 @@
                 <Badge :category="ticket.category" />
               </div>
               <h1 class="font-display text-xl font-bold text-slate-900 leading-snug">{{ ticket.title }}</h1>
+              <div class="mt-2 flex flex-wrap gap-2">
+                <span
+                  v-if="ticket.slaDeferred"
+                  class="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded bg-amber-50 text-amber-800"
+                >
+                  Traitement différé — reprise {{ formatSlaDate(ticket.slaResumeAt) }}
+                </span>
+                <span
+                  v-else-if="ticket.slaDeadline"
+                  class="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded"
+                  :class="slaBadgeClass"
+                >
+                  SLA {{ formatSlaDate(ticket.slaDeadline) }}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -598,6 +613,25 @@ const formatDate = (dateStr: string) => {
     minute: '2-digit'
   });
 };
+
+const formatSlaDate = (dateStr?: string | null) => {
+  if (!dateStr) return '—';
+  return new Date(dateStr).toLocaleString('fr-FR', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+const slaBadgeClass = computed(() => {
+  const deadline = ticket.value?.slaDeadline;
+  if (!deadline) return 'bg-slate-50 text-slate-600';
+  const ms = new Date(deadline).getTime() - Date.now();
+  if (ms < 0) return 'bg-rose-100 text-rose-800';
+  if (ms < 2 * 3600 * 1000) return 'bg-orange-50 text-orange-800';
+  return 'bg-emerald-50 text-emerald-800';
+});
 
 const timeAgo = (dateStr: string) => {
   const diff = Date.now() - new Date(dateStr).getTime();

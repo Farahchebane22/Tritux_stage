@@ -166,6 +166,15 @@
               {{ mode === 'login' ? 'Se connecter' : "Créer mon compte" }}
             </button>
 
+            <button
+              v-if="keycloakOn && mode === 'login'"
+              type="button"
+              class="w-full py-2.5 rounded-lg text-sm font-semibold border border-slate-200 text-slate-800 hover:bg-slate-50 mt-2 cursor-pointer"
+              @click="loginKeycloak"
+            >
+              Connexion via Keycloak (SSO)
+            </button>
+
             <p v-if="errorMsg" class="text-xs text-red-600 text-center mt-2">{{ errorMsg }}</p>
           </form>
         </div>
@@ -187,8 +196,11 @@ import {
   Zap as ZapIcon
 } from 'lucide-vue-next';
 
+import { isKeycloakEnabled } from '../auth/keycloak';
+
 const router = useRouter();
 const authStore = useAuthStore();
+const keycloakOn = isKeycloakEnabled();
 
 const mode = ref<'login' | 'register'>('login');
 const showPw = ref(false);
@@ -204,9 +216,22 @@ const features = [
   { icon: ShieldIcon, color: '#34D399', label: 'Sécurisé & traçable', sub: 'Historique complet de chaque demande' },
 ];
 
+const loginKeycloak = async () => {
+  errorMsg.value = '';
+  try {
+    await authStore.loginWithKeycloak();
+  } catch {
+    errorMsg.value = 'Impossible de joindre Keycloak.';
+  }
+};
+
 const handleSubmit = async () => {
   errorMsg.value = '';
   try {
+    if (keycloakOn) {
+      await authStore.loginWithKeycloak();
+      return;
+    }
     if (mode.value === 'register') {
       await apiService.register(name.value, email.value, dept.value, password.value);
     }

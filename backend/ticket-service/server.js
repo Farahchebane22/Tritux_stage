@@ -1,19 +1,23 @@
 import express from 'express';
 import cors from 'cors';
-import jwt from 'jsonwebtoken';
 import mysql from 'mysql2/promise';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import {
+  authenticateToken,
+  requireRoles,
+  mapLegacyRole,
+} from '../shared/auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 5002;
-const JWT_SECRET = process.env.JWT_SECRET || 'tritux_secret_key_12345';
+const CONTRACT_SERVICE_URL = process.env.CONTRACT_SERVICE_URL || 'http://localhost:5003';
 
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
@@ -185,31 +189,6 @@ async function initDb() {
 
 initDb();
 
-function authenticateToken(req, res, next) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) {
-    return res.status(401).json({ message: 'Non autorisé - Token manquant' });
-  }
-
-  const token = authHeader.split(' ')[1];
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
-    next();
-  } catch (err) {
-    return res.status(401).json({ message: 'Session invalide ou expirée' });
-  }
-}
-
-function requireRoles(...roles) {
-  return (req, res, next) => {
-    if (!req.user || !roles.includes(req.user.role)) {
-      return res.status(403).json({ message: 'Accès refusé - rôle insuffisant' });
-    }
-    next();
-  };
-}
-
 function mapAttachment(row) {
   return {
     id: row.id,
@@ -258,6 +237,12 @@ async function buildTicketFromDb(id) {
       : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    societeId: row.societe_id || null,
+    applicationId: row.application_id || null,
+    contratId: row.contrat_id || null,
+    slaDeadline: row.sla_deadline || null,
+    slaDeferred: !!row.sla_deferred,
+    slaResumeAt: row.sla_resume_at || null,
     comments: comments.map(c => ({
       id: c.id,
       content: c.content,
@@ -409,13 +394,37 @@ app.post('/notifications/read-all', authenticateToken, async (req, res) => {
 
 function canViewTicket(user, ticket) {
   if (!user || !ticket) return false;
-  if (user.role === 'admin') return true;
-  if (user.role === 'agent') return ticket.assignedTo?.id === user.id;
+  const role = mapLegacyRole(user.role);
+  if (role === 'SUPER_ADMIN' || role === 'admin') return true;
+  if (role === 'AGENT_IT' || role === 'agent') return ticket.assignedTo?.id === user.id;
+  if (role === 'CLIENT_ADMIN' && user.societeId) {
+    return ticket.societeId === user.societeId || ticket.createdBy?.id === user.id;
+  }
   return ticket.createdBy?.id === user.id;
+}
+
+async function evaluateSla({ authHeader, societeId, priority, createdAt, ticketId, category }) {
+  if (!societeId) return null;
+  try {
+    const resp = await fetch(`${CONTRACT_SERVICE_URL}/sla/evaluate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: authHeader || '',
+      },
+      body: JSON.stringify({ societeId, priority, createdAt, ticketId, category }),
+    });
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch (e) {
+    console.warn('[Ticket Service] SLA evaluate failed:', e.message);
+    return null;
+  }
 }
 
 app.get('/', authenticateToken, async (req, res) => {
   try {
+    const role = mapLegacyRole(req.user.role);
     if (useMock) {
       const filtered = mockTickets.filter(t => canViewTicket(req.user, t));
       return res.json(filtered);
@@ -423,10 +432,13 @@ app.get('/', authenticateToken, async (req, res) => {
 
     let query = 'SELECT id FROM tickets';
     const params = [];
-    if (req.user.role === 'agent') {
+    if (role === 'AGENT_IT' || role === 'agent') {
       query += ' WHERE assigned_to_id = ?';
       params.push(req.user.id);
-    } else if (req.user.role !== 'admin') {
+    } else if (role === 'CLIENT_ADMIN' && req.user.societeId) {
+      query += ' WHERE societe_id = ?';
+      params.push(req.user.societeId);
+    } else if (role !== 'SUPER_ADMIN' && role !== 'admin') {
       query += ' WHERE created_by_id = ?';
       params.push(req.user.id);
     }
@@ -466,7 +478,7 @@ app.get('/:id', authenticateToken, async (req, res) => {
 });
 
 app.post('/', authenticateToken, async (req, res) => {
-  const { title, description, category, priority, files, attachments, aiSuggestion } = req.body;
+  const { title, description, category, priority, files, attachments, aiSuggestion, applicationId } = req.body;
   if (!title || !description) {
     return res.status(400).json({ message: 'Titre et description requis' });
   }
@@ -475,6 +487,16 @@ app.post('/', authenticateToken, async (req, res) => {
   const now = new Date().toISOString();
   const creatorName = displayName(req.user);
   const fileList = attachments || files || [];
+  const societeId = req.user.societeId || req.body.societeId || null;
+
+  const sla = await evaluateSla({
+    authHeader: req.headers.authorization,
+    societeId,
+    priority: priority || 'medium',
+    createdAt: now,
+    ticketId: id,
+    category: category || 'other',
+  });
 
   const historyEntry = {
     id: `h_${Date.now()}`,
@@ -495,6 +517,12 @@ app.post('/', authenticateToken, async (req, res) => {
     createdBy: { id: req.user.id, name: creatorName, email: req.user.email },
     createdAt: now,
     updatedAt: now,
+    societeId,
+    applicationId: applicationId || null,
+    contratId: sla?.contratId || null,
+    slaDeadline: sla?.slaDeadline || null,
+    slaDeferred: !!sla?.deferred,
+    slaResumeAt: sla?.resumeAt || null,
     comments: [],
     attachments: fileList.map((f, index) => ({
       id: `a_${Date.now()}_${index}`,
@@ -513,10 +541,26 @@ app.post('/', authenticateToken, async (req, res) => {
     if (useMock) {
       mockTickets.unshift(newTicket);
     } else {
-      await pool.query(
-        'INSERT INTO tickets (id, title, description, status, priority, category, created_by_id, created_by_name, created_by_email, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [id, title, description, 'open', newTicket.priority, newTicket.category, req.user.id, creatorName, req.user.email, now, now]
-      );
+      try {
+        await pool.query(
+          `INSERT INTO tickets
+           (id, title, description, status, priority, category, created_by_id, created_by_name, created_by_email,
+            created_at, updated_at, societe_id, application_id, contrat_id, sla_deadline, sla_deferred, sla_resume_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            id, title, description, 'open', newTicket.priority, newTicket.category,
+            req.user.id, creatorName, req.user.email, now, now,
+            societeId, applicationId || null, sla?.contratId || null,
+            sla?.slaDeadline || null, sla?.deferred ? 1 : 0, sla?.resumeAt || null
+          ]
+        );
+      } catch (colErr) {
+        // Fallback if multi-tenant columns not yet migrated
+        await pool.query(
+          'INSERT INTO tickets (id, title, description, status, priority, category, created_by_id, created_by_name, created_by_email, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [id, title, description, 'open', newTicket.priority, newTicket.category, req.user.id, creatorName, req.user.email, now, now]
+        );
+      }
 
       await pool.query(
         'INSERT INTO history (id, ticket_id, field, old_value, new_value, changed_by_id, changed_by_name, changed_by_email, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -637,8 +681,8 @@ const updateStatusHandler = async (req, res) => {
   }
 };
 
-app.put('/:id/status', authenticateToken, requireRoles('agent', 'admin'), updateStatusHandler);
-app.patch('/:id/status', authenticateToken, requireRoles('agent', 'admin'), updateStatusHandler);
+app.put('/:id/status', authenticateToken, requireRoles('agent', 'admin', 'AGENT_IT', 'SUPER_ADMIN'), updateStatusHandler);
+app.patch('/:id/status', authenticateToken, requireRoles('agent', 'admin', 'AGENT_IT', 'SUPER_ADMIN'), updateStatusHandler);
 
 const assignTicketHandler = async (req, res) => {
   const { id } = req.params;
@@ -711,8 +755,8 @@ const assignTicketHandler = async (req, res) => {
   }
 };
 
-app.put('/:id/assign', authenticateToken, requireRoles('agent', 'admin'), assignTicketHandler);
-app.patch('/:id/assign', authenticateToken, requireRoles('agent', 'admin'), assignTicketHandler);
+app.put('/:id/assign', authenticateToken, requireRoles('agent', 'admin', 'AGENT_IT', 'SUPER_ADMIN'), assignTicketHandler);
+app.patch('/:id/assign', authenticateToken, requireRoles('agent', 'admin', 'AGENT_IT', 'SUPER_ADMIN'), assignTicketHandler);
 
 app.post('/:id/comments', authenticateToken, async (req, res) => {
   const { id } = req.params;

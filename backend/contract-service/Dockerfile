@@ -1,8 +1,8 @@
 FROM node:20-alpine
 WORKDIR /app
-COPY user-service/package*.json ./
+COPY contract-service/package*.json ./
 RUN npm install --omit=dev
-COPY user-service/ ./
+COPY contract-service/server.js ./
 COPY shared /shared
-EXPOSE 5001
+EXPOSE 5003
 CMD ["node", "server.js"]
