@@ -63,11 +63,8 @@ function extractRealmRoles(payload) {
 function toUser(payload, source) {
   const roles = extractRealmRoles(payload);
   const role = normalizeRole(roles.length ? roles : [payload.role]);
-  const societeId =
-    payload.societe_id ||
-    payload.societeId ||
-    (Array.isArray(payload.societe_id) ? payload.societe_id[0] : null) ||
-    null;
+  const rawSocieteId = payload.societe_id ?? payload.societeId ?? null;
+  const societeId = Array.isArray(rawSocieteId) ? (rawSocieteId[0] || null) : (rawSocieteId || null);
 
   return {
     id: payload.sub || payload.id,

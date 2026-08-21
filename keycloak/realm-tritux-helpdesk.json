@@ -64,6 +64,14 @@
   ],
   "users": [
     {
+      "username": "service-account-tritux-backend",
+      "serviceAccountClientId": "tritux-backend",
+      "enabled": true,
+      "clientRoles": {
+        "realm-management": ["manage-users", "view-users", "query-users", "view-realm"]
+      }
+    },
+    {
       "username": "admin@tritux.com",
       "email": "admin@tritux.com",
       "firstName": "Admin",

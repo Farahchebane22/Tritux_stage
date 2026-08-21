@@ -87,31 +87,13 @@
             </button>
           </div>
 
-          <div v-if="mode === 'register'" class="flex gap-1 p-1 rounded-lg mb-4" style="background: var(--background)">
-            <button
-              type="button"
-              @click="registerAs = 'internal'"
-              :class="[
-                'flex-1 py-1.5 rounded-md text-xs font-medium transition-all duration-150 cursor-pointer',
-                registerAs === 'internal' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              ]"
-            >
-              Compte interne Tritux
-            </button>
-            <button
-              type="button"
-              @click="registerAs = 'societe'"
-              :class="[
-                'flex-1 py-1.5 rounded-md text-xs font-medium transition-all duration-150 cursor-pointer',
-                registerAs === 'societe' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              ]"
-            >
-              Nouvelle société cliente
-            </button>
+          <div v-if="mode === 'register'" class="rounded-lg mb-4 px-3 py-2 text-xs text-slate-500" style="background: var(--background)">
+            Inscription d'une nouvelle société cliente. Votre compte sera créé dans Keycloak
+            (administrateur de votre société), l'unique système d'authentification de la plateforme.
           </div>
 
           <form @submit.prevent="handleSubmit" class="space-y-4">
-            <div v-if="mode === 'register' && registerAs === 'societe'">
+            <div v-if="mode === 'register'">
               <label class="block text-xs font-medium text-slate-700 mb-1.5">Nom de la société</label>
               <input
                 type="text"
@@ -122,7 +104,7 @@
                 style="borderColor: var(--border)"
               />
             </div>
-            <div v-if="mode === 'register' && registerAs === 'societe'">
+            <div v-if="mode === 'register'">
               <label class="block text-xs font-medium text-slate-700 mb-1.5">Secteur d'activité</label>
               <input
                 type="text"
@@ -132,37 +114,8 @@
                 style="borderColor: var(--border)"
               />
             </div>
-            <div v-if="mode === 'register' && registerAs === 'internal'">
-              <label class="block text-xs font-medium text-slate-700 mb-1.5">Nom complet</label>
-              <input
-                type="text"
-                v-model="name"
-                placeholder="Sami Belhadj"
-                required
-                class="w-full px-3.5 py-2.5 rounded-lg text-sm border text-slate-900 placeholder-slate-400 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
-                style="borderColor: var(--border)"
-              />
-            </div>
 
-            <div v-if="mode === 'register' && registerAs === 'internal'">
-              <label class="block text-xs font-medium text-slate-700 mb-1.5">Département</label>
-              <select
-                v-model="dept"
-                required
-                class="w-full px-3.5 py-2.5 rounded-lg text-sm border text-slate-900 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
-                style="borderColor: var(--border)"
-              >
-                <option value="">Sélectionner…</option>
-                <option>Finance</option>
-                <option>Marketing</option>
-                <option>RH</option>
-                <option>Commercial</option>
-                <option>IT Support</option>
-                <option>Direction</option>
-              </select>
-            </div>
-
-            <div v-if="mode === 'register' && registerAs === 'societe'">
+            <div v-if="mode === 'register'">
               <label class="block text-xs font-medium text-slate-700 mb-1.5">Votre nom complet (administrateur société)</label>
               <input
                 type="text"
@@ -222,14 +175,9 @@
               {{ mode === 'login' ? 'Se connecter' : "Créer mon compte" }}
             </button>
 
-            <button
-              v-if="keycloakOn && mode === 'login'"
-              type="button"
-              class="w-full py-2.5 rounded-lg text-sm font-semibold border border-slate-200 text-slate-800 hover:bg-slate-50 mt-2 cursor-pointer"
-              @click="loginKeycloak"
-            >
-              Connexion via Keycloak (SSO)
-            </button>
+            <p v-if="keycloakOn" class="text-[10px] text-center text-slate-400 mt-2">
+              Authentification sécurisée par Keycloak
+            </p>
 
             <p v-if="errorMsg" class="text-xs text-red-600 text-center mt-2">{{ errorMsg }}</p>
           </form>
@@ -259,12 +207,10 @@ const authStore = useAuthStore();
 const keycloakOn = isKeycloakEnabled();
 
 const mode = ref<'login' | 'register'>('login');
-const registerAs = ref<'internal' | 'societe'>('societe');
 const showPw = ref(false);
 const email = ref('');
 const password = ref('');
 const name = ref('');
-const dept = ref('');
 const societeName = ref('');
 const secteurActivite = ref('');
 const errorMsg = ref('');
@@ -275,40 +221,24 @@ const features = [
   { icon: ShieldIcon, color: '#34D399', label: 'Sécurisé & traçable', sub: 'Historique complet de chaque demande' },
 ];
 
-const loginKeycloak = async () => {
-  errorMsg.value = '';
-  try {
-    await authStore.loginWithKeycloak();
-  } catch {
-    errorMsg.value = 'Impossible de joindre Keycloak.';
-  }
-};
-
 const handleSubmit = async () => {
   errorMsg.value = '';
   try {
     if (mode.value === 'register') {
-      if (registerAs.value === 'societe') {
-        await apiService.registerSociete({
-          societeName: societeName.value,
-          secteurActivite: secteurActivite.value || undefined,
-          name: name.value,
-          email: email.value,
-          password: password.value,
-        });
-        await authStore.login(email.value, 'user', password.value);
-        router.push('/');
-        return;
-      }
-      await apiService.register(name.value, email.value, dept.value, password.value);
-      await authStore.login(email.value, 'user', password.value || undefined);
+      await apiService.registerSociete({
+        societeName: societeName.value,
+        secteurActivite: secteurActivite.value || undefined,
+        name: name.value,
+        email: email.value,
+        password: password.value,
+      });
+      // Le compte vient d'être créé dans Keycloak : on se connecte immédiatement
+      // avec les mêmes identifiants pour ouvrir une vraie session Keycloak.
+      await authStore.loginKeycloakDirect(email.value, password.value);
       router.push('/');
       return;
     }
 
-    // Note : le SSO Keycloak reste disponible via son propre bouton dédié
-    // ("Connexion via Keycloak"). Le bouton principal utilise toujours le
-    // compte local, indispensable pour les sociétés créées en self-service.
     await authStore.login(email.value, 'user', password.value || undefined);
     router.push('/');
   } catch (e: any) {

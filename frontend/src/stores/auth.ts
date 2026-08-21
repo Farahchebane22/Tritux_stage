@@ -10,6 +10,9 @@ import {
   isKeycloakEnabled,
   keycloakLogin,
   keycloakLogout,
+  keycloakPasswordLogin,
+  keycloakRefreshToken,
+  decodeJwtPayload,
   mapKeycloakRoles,
 } from '../auth/keycloak';
 import { useContractStore } from './contract';
@@ -79,11 +82,83 @@ export const useAuthStore = defineStore('auth', () => {
     await keycloakLogin();
   };
 
+  let refreshTimer: ReturnType<typeof setInterval> | null = null;
+
+  const stopTokenRefresh = () => {
+    if (refreshTimer) {
+      clearInterval(refreshTimer);
+      refreshTimer = null;
+    }
+  };
+
+  const scheduleTokenRefresh = (refreshToken: string) => {
+    stopTokenRefresh();
+    refreshTimer = setInterval(async () => {
+      try {
+        const tokens = await keycloakRefreshToken(refreshToken);
+        localStorage.setItem('token', tokens.access_token);
+        localStorage.setItem('refresh_token', tokens.refresh_token);
+        scheduleTokenRefresh(tokens.refresh_token);
+      } catch (e) {
+        console.warn('[auth] Session Keycloak expirée, déconnexion.', e);
+        stopTokenRefresh();
+        await logout();
+      }
+    }, 4 * 60 * 1000);
+  };
+
+  /**
+   * Connexion via Keycloak (Direct Access Grant) — utilise notre propre
+   * formulaire, mais l'authentification et le token sont 100% Keycloak.
+   * C'est le SEUL mécanisme de connexion de l'application, conformément
+   * au cahier des charges ("remplacer le JWT maison par Keycloak").
+   */
+  const loginKeycloakDirect = async (email: string, password: string) => {
+    const tokens = await keycloakPasswordLogin(email, password);
+    const payload = decodeJwtPayload(tokens.access_token);
+    const role = mapKeycloakRoles({ realmAccess: { roles: payload.realm_access?.roles || [] } } as any) as User['role'];
+    const societeAttr = payload.societe_id;
+    const societeId = Array.isArray(societeAttr) ? societeAttr[0] : societeAttr || null;
+
+    // IMPORTANT : stocker le token AVANT tout appel API, sinon l'intercepteur
+    // axios n'a rien à attacher en Authorization (→ 401 "Token manquant").
+    localStorage.setItem('token', tokens.access_token);
+    localStorage.setItem('refresh_token', tokens.refresh_token);
+
+    try {
+      const synced = await apiService.syncKeycloakUser({
+        email: payload.email || payload.preferred_username || email,
+        name: payload.name || email,
+        role,
+        societeId,
+        keycloakId: payload.sub,
+      });
+      user.value = synced.user;
+    } catch (e) {
+      console.warn('[auth] keycloak-sync a échoué, session basée sur le token brut.', e);
+      user.value = {
+        id: payload.sub,
+        email: payload.email || email,
+        name: payload.name || email,
+        role,
+        societeId,
+        keycloakId: payload.sub,
+        joinDate: new Date().toISOString().slice(0, 10),
+      } as User;
+    }
+
+    isLoggedIn.value = true;
+    authMode.value = 'keycloak';
+    localStorage.setItem('user', JSON.stringify(user.value));
+    scheduleTokenRefresh(tokens.refresh_token);
+  };
+
   const login = async (email: string, role: 'user' | 'agent' | 'admin', password?: string) => {
-    // Connexion locale (compte créé via /register ou /register-societe).
-    // Indépendante de Keycloak : un compte local n'existe pas dans l'annuaire
-    // Keycloak, donc on ne doit jamais rediriger vers le SSO ici. Le SSO reste
-    // accessible via authStore.loginWithKeycloak() / le bouton dédié.
+    // Compatibilité : si Keycloak est actif, toute connexion passe par lui.
+    if (isKeycloakEnabled()) {
+      await loginKeycloakDirect(email, password || '');
+      return;
+    }
     try {
       const { user: loggedUser, token } = await apiService.login(email, role, password);
       authMode.value = 'legacy';
@@ -108,10 +183,12 @@ export const useAuthStore = defineStore('auth', () => {
   const logout = async () => {
     user.value = null;
     isLoggedIn.value = false;
+    stopTokenRefresh();
     localStorage.removeItem('user');
     localStorage.removeItem('token');
+    localStorage.removeItem('refresh_token');
     useContractStore().clear();
-    if (authMode.value === 'keycloak' && isKeycloakEnabled()) {
+    if (authMode.value === 'keycloak' && isKeycloakEnabled() && getKeycloak()?.authenticated) {
       await keycloakLogout();
     }
   };
@@ -153,5 +230,6 @@ export const useAuthStore = defineStore('auth', () => {
     changePassword,
     getAccessToken,
     setLocalSession,
+    loginKeycloakDirect,
   };
 });

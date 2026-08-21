@@ -8,6 +8,7 @@ import {
   mapLegacyRole,
   JWT_SECRET as SHARED_JWT_SECRET,
 } from '../shared/auth.js';
+import { createKeycloakUser } from './keycloakAdmin.js';
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -399,7 +400,10 @@ app.post('/register', async (req, res) => {
 
 /**
  * Inscription self-service d'une nouvelle société cliente.
- * Crée la société (sans contrat) + son premier utilisateur en CLIENT_ADMIN.
+ * Crée le compte DANS KEYCLOAK (source de vérité de l'identité, conformément
+ * au cahier des charges), puis synchronise la société + l'utilisateur en base
+ * locale (societe_id, rôle, keycloak_id). Aucun mot de passe n'est géré en
+ * dehors de Keycloak : la connexion se fait ensuite exclusivement via SSO.
  * Body: { societeName, secteurActivite?, name, email, password }
  */
 app.post('/register-societe', async (req, res) => {
@@ -417,7 +421,25 @@ app.post('/register-societe', async (req, res) => {
     const societeId = `soc_${Date.now()}`;
     const userId = `u_${Date.now() + 1}`;
     const joinDate = new Date().toISOString().split('T')[0];
-    const passwordHash = await bcrypt.hash(password, 10);
+    const [firstName, ...rest] = name.trim().split(' ');
+    const lastName = rest.join(' ') || firstName;
+
+    let keycloakId = null;
+    try {
+      keycloakId = await createKeycloakUser({
+        email,
+        firstName: firstName || name,
+        lastName,
+        password,
+        realmRole: 'client-admin',
+        societeId,
+      });
+    } catch (kcErr) {
+      return res.status(502).json({
+        message: "Impossible de créer le compte dans Keycloak. Vérifiez que Keycloak tourne et que le client 'tritux-backend' a bien le rôle 'manage-users'.",
+        error: kcErr.message,
+      });
+    }
 
     if (useMock) {
       const newUser = {
@@ -429,15 +451,14 @@ app.post('/register-societe', async (req, res) => {
         joinDate,
         societe_id: societeId,
         societeId,
+        keycloak_id: keycloakId,
         ticketsCreated: 0,
         ticketsResolved: 0,
-        passwordHash,
       };
       mockUsers.push(newUser);
       const user = await enrichUser(newUser);
-      return res.json({
+      return res.status(201).json({
         user,
-        token: signToken(user),
         societe: { id: societeId, nom: societeName, secteur_activite: secteurActivite || null },
       });
     }
@@ -449,16 +470,15 @@ app.post('/register-societe', async (req, res) => {
     );
 
     await pool.query(
-      `INSERT INTO users (id, name, email, role, department, joinDate, password_hash, societe_id)
+      `INSERT INTO users (id, name, email, role, department, joinDate, societe_id, keycloak_id)
        VALUES (?, ?, ?, 'CLIENT_ADMIN', 'Direction', ?, ?, ?)`,
-      [userId, name, email, joinDate, passwordHash, societeId]
+      [userId, name, email, joinDate, societeId, keycloakId]
     );
 
     const row = await findUserById(userId);
     const user = await enrichUser(row);
-    res.json({
+    res.status(201).json({
       user,
-      token: signToken(user),
       societe: { id: societeId, nom: societeName, secteur_activite: secteurActivite || null },
     });
   } catch (err) {
