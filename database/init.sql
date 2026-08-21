@@ -209,13 +209,15 @@ CREATE TABLE IF NOT EXISTS rapports_archives (
 INSERT INTO societes (id, nom, secteur_activite, contact_principal_nom, contact_principal_email, contact_principal_telephone, date_creation)
 VALUES
 ('soc_demo', 'Acme Tunisie SAS', 'Industrie', 'Nour Ben Ali', 'nour.benali@acme.tn', '+216 71 000 000', '2026-01-10'),
+('soc_orange', 'Orange Tunisie', 'Télécommunications', 'Mohamed Ben Amor', 'mohamed@orange.tn', '+216 72 123 456', '2026-02-01'),
 ('soc_tritux', 'Tritux Groupe (interne)', 'IT / Consulting', 'Admin Tritux', 'admin@tritux.com', '+216 71 111 111', '2020-05-20')
 ON DUPLICATE KEY UPDATE nom=VALUES(nom);
 
 INSERT INTO applications (id, societe_id, nom, description)
 VALUES
 ('app_acme_erp', 'soc_demo', 'Acme ERP', 'ERP métier Acme'),
-('app_acme_web', 'soc_demo', 'Portail client Acme', 'Application web B2C')
+('app_acme_web', 'soc_demo', 'Portail client Acme', 'Application web B2C'),
+('app_orange_portal', 'soc_orange', 'E-Shop Orange', 'Portail client E-Shop')
 ON DUPLICATE KEY UPDATE nom=VALUES(nom);
 
 INSERT INTO contrats_maintenance (
@@ -232,27 +234,57 @@ INSERT INTO contrats_maintenance (
   '2026-12-31',
   'actif',
   'Contrat de maintenance 5/7 (lundi–vendredi 08h–18h). Les tickets hors fenêtre sont horodatés et traités à la prochaine ouverture. Escalade immédiate pour urgences en heures ouvrées via email/SMS.'
+), (
+  'ctr_orange_247',
+  'soc_orange',
+  '24/7',
+  'sms',
+  'lundi-dimanche',
+  '00:00-24:00',
+  '2026-01-01',
+  '2026-12-31',
+  'actif',
+  'Contrat de maintenance critique 24/7 (lundi-dimanche 24h/24). Traitement et escalade immédiate des urgences sans aucune restriction de plage horaire.'
 ) ON DUPLICATE KEY UPDATE statut=VALUES(statut), date_fin=VALUES(date_fin);
 
 INSERT INTO sla_regles (id, contrat_id, priorite, delai_reponse_minutes, notification_immediate, canal) VALUES
 ('sla_acme_low', 'ctr_acme_57', 'low', 480, 0, 'email'),
 ('sla_acme_med', 'ctr_acme_57', 'medium', 240, 0, 'email'),
 ('sla_acme_high', 'ctr_acme_57', 'high', 120, 1, 'email'),
-('sla_acme_urg', 'ctr_acme_57', 'urgent', 30, 1, 'sms')
+('sla_acme_urg', 'ctr_acme_57', 'urgent', 30, 1, 'sms'),
+('sla_orange_low', 'ctr_orange_247', 'low', 480, 0, 'email'),
+('sla_orange_med', 'ctr_orange_247', 'medium', 240, 0, 'email'),
+('sla_orange_high', 'ctr_orange_247', 'high', 60, 1, 'email'),
+('sla_orange_urg', 'ctr_orange_247', 'urgent', 15, 1, 'sms')
 ON DUPLICATE KEY UPDATE delai_reponse_minutes=VALUES(delai_reponse_minutes);
 
 -- Rôles mappés : SUPER_ADMIN, AGENT_IT, CLIENT_ADMIN, CLIENT_USER
--- Compat: anciennes valeurs admin/agent/user encore acceptées côté code
 INSERT INTO users (id, name, email, role, department, joinDate, specialties, societe_id, keycloak_id)
 VALUES
 ('u1', 'Sami Belhadj', 'sami.belhadj@tritux.com', 'CLIENT_USER', 'Marketing', '2023-01-15', NULL, 'soc_demo', NULL),
 ('u2', 'Leila Mansour', 'leila.mansour@tritux.com', 'AGENT_IT', 'IT Support', '2022-09-01', 'network,security,account', NULL, NULL),
 ('u3', 'Karim Oueslati', 'karim.oueslati@tritux.com', 'AGENT_IT', 'IT Support', '2022-11-10', 'software,email,hardware', NULL, NULL),
 ('u4', 'Admin Tritux', 'admin@tritux.com', 'SUPER_ADMIN', 'Direction', '2020-05-20', NULL, NULL, NULL),
-('u5', 'Nour Ben Ali', 'nour.benali@acme.tn', 'CLIENT_ADMIN', 'Direction', '2026-01-10', NULL, 'soc_demo', NULL)
+('u5', 'Nour Ben Ali', 'nour.benali@acme.tn', 'CLIENT_ADMIN', 'Direction', '2026-01-10', NULL, 'soc_demo', NULL),
+('u6', 'Nour Orange', 'nour.orange@orange.tn', 'CLIENT_ADMIN', 'Direction', '2026-02-01', NULL, 'soc_orange', NULL),
+('u7', 'Sami Orange', 'sami.orange@orange.tn', 'CLIENT_USER', 'Support Client', '2026-02-01', NULL, 'soc_orange', NULL)
 ON DUPLICATE KEY UPDATE
   name=VALUES(name),
   role=VALUES(role),
   department=VALUES(department),
   specialties=VALUES(specialties),
   societe_id=VALUES(societe_id);
+
+-- Tickets de test pour démontrer les scénarios
+INSERT INTO tickets (id, title, description, status, priority, category, created_by_id, created_by_name, created_by_email, created_at, updated_at, societe_id, application_id, contrat_id, sla_deadline, sla_deferred, sla_resume_at)
+VALUES
+('TRX-9001', 'Panne totale E-Shop Orange', 'Le portail de vente en ligne E-Shop est inaccessible. Impact critique pour les utilisateurs.', 'open', 'urgent', 'software', 'u7', 'Sami Orange', 'sami.orange@orange.tn', '2026-08-16T22:00:00.000Z', '2026-08-16T22:00:00.000Z', 'soc_orange', 'app_orange_portal', 'ctr_orange_247', '2026-08-16T22:15:00.000Z', 0, NULL),
+('TRX-9002', 'Problème de synchronisation ERP Acme', 'Problème de synchronisation des ventes avec le serveur principal Acme.', 'open', 'urgent', 'software', 'u1', 'Sami Belhadj', 'sami.belhadj@tritux.com', '2026-08-14T20:00:00.000Z', '2026-08-14T20:00:00.000Z', 'soc_demo', 'app_acme_erp', 'ctr_acme_57', '2026-08-17T08:30:00.000Z', 1, '2026-08-17T08:00:00.000Z')
+ON DUPLICATE KEY UPDATE title=VALUES(title), status=VALUES(status);
+
+-- Escalades SLA pour TRX-9001 (Orange 24/7 urgent -> alerte immédiate SMS)
+INSERT INTO escalade_notifications (id, ticket_id, agent_id, canal, date_envoi, statut_envoi, detail)
+VALUES
+('esc_demo_1', 'TRX-9001', 'u2', 'sms', '2026-08-16T22:00:05.000Z', 'envoye', '[MOCK sms] Alerte urgente ticket TRX-9001 (catégorie=software) envoyée à Leila Mansour')
+ON DUPLICATE KEY UPDATE detail=VALUES(detail);
+

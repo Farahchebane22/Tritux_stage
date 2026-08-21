@@ -32,10 +32,23 @@
         "*"
       ],
       "webOrigins": ["+", "*"],
-      "attributes": {
-        "pkce.code.challenge.method": "S256"
-      },
-      "protocol": "openid-connect"
+      "protocol": "openid-connect",
+      "protocolMappers": [
+        {
+          "name": "societe_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "societe_id",
+            "claim.name": "societe_id",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
     },
     {
       "clientId": "tritux-backend",
@@ -92,6 +105,28 @@
       "credentials": [{ "type": "password", "value": "user123", "temporary": false }],
       "realmRoles": ["client-user"],
       "attributes": { "societe_id": ["soc_demo"] }
+    },
+    {
+      "username": "nour.orange@orange.tn",
+      "email": "nour.orange@orange.tn",
+      "firstName": "Nour",
+      "lastName": "Orange",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "client123", "temporary": false }],
+      "realmRoles": ["client-admin"],
+      "attributes": { "societe_id": ["soc_orange"] }
+    },
+    {
+      "username": "sami.orange@orange.tn",
+      "email": "sami.orange@orange.tn",
+      "firstName": "Sami",
+      "lastName": "Orange",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "user123", "temporary": false }],
+      "realmRoles": ["client-user"],
+      "attributes": { "societe_id": ["soc_orange"] }
     }
   ]
 }

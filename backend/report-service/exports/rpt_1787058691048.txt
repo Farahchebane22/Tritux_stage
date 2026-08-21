@@ -1,0 +1,15 @@
+=== RAPPORT MAINTENANCE TRITUX ===
+Société: soc_demo
+Période: 2025-12-31 → 2026-08-18
+Généré: 2026-08-18T13:11:31.049Z
+
+Tickets total: 2
+Résolus: 0
+Ouverts: 2
+Temps moyen résolution (h): N/A
+Taux respect SLA: N/A
+
+Par priorité: {"urgent":1,"high":1,"medium":0,"low":0}
+Par statut: {"open":2,"inprogress":0,"resolved":0,"closed":0}
+
+(Export texte — remplacer par PDF réel / puppeteer en production)
