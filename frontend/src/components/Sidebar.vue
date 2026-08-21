@@ -68,6 +68,28 @@
       </button>
     </nav>
 
+    <!-- Contrat de maintenance (sociétés clientes) -->
+    <div v-if="contractStore.status?.contrat" class="px-4 pb-3">
+      <div class="rounded-lg px-3 py-2.5" style="background: rgba(255,255,255,0.05)">
+        <div class="flex items-center justify-between">
+          <p class="text-[10px] uppercase tracking-wide" style="color: var(--sidebar-fg)">Contrat</p>
+          <button
+            v-if="currentUser.role === 'CLIENT_ADMIN'"
+            type="button"
+            title="Modifier le contrat"
+            class="text-slate-400 hover:text-white cursor-pointer"
+            @click="router.push('/contract/settings')"
+          >
+            <PencilIcon :size="12" />
+          </button>
+        </div>
+        <p class="text-white text-xs font-semibold mt-0.5">{{ contractStore.status.contrat.type_contrat }}</p>
+        <p class="text-[10px] mt-0.5" style="color: var(--sidebar-fg)">
+          Jusqu'au {{ formatContractDate(contractStore.status.contrat.date_fin) }}
+        </p>
+      </div>
+    </div>
+
     <!-- User footer -->
     <div class="px-4 py-4 border-t" style="borderColor: var(--sidebar-border)">
       <div class="flex items-center gap-3" v-if="currentUser">
@@ -101,6 +123,7 @@ import { computed } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useNotificationsStore } from '../stores/notifications';
+import { useContractStore } from '../stores/contract';
 import {
   LayoutDashboard as LayoutDashboardIcon,
   Ticket as TicketIcon,
@@ -111,13 +134,18 @@ import {
   Settings as SettingsIcon,
   ChevronRight as ChevronRightIcon,
   ShieldAlert as ShieldAlertIcon,
-  FileBarChart as FileBarChartIcon
+  FileBarChart as FileBarChartIcon,
+  Pencil as PencilIcon
 } from 'lucide-vue-next';
 
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
 const notificationsStore = useNotificationsStore();
+const contractStore = useContractStore();
+
+const formatContractDate = (d?: string) =>
+  d ? new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
 
 const currentUser = computed(() => authStore.user || { name: 'Guest', role: 'user' });
 
@@ -144,12 +172,20 @@ const roleLabels: Record<string, string> = {
   user: 'Utilisateur',
   agent: 'Agent IT',
   admin: 'Administrateur',
+  CLIENT_USER: 'Utilisateur',
+  CLIENT_ADMIN: 'Admin société',
+  AGENT_IT: 'Agent IT',
+  SUPER_ADMIN: 'Administrateur',
 };
 
 const roleColors: Record<string, string> = {
   user: 'bg-blue-500/20 text-blue-300',
   agent: 'bg-violet-500/20 text-violet-300',
   admin: 'bg-rose-500/20 text-rose-300',
+  CLIENT_USER: 'bg-blue-500/20 text-blue-300',
+  CLIENT_ADMIN: 'bg-emerald-500/20 text-emerald-300',
+  AGENT_IT: 'bg-violet-500/20 text-violet-300',
+  SUPER_ADMIN: 'bg-rose-500/20 text-rose-300',
 };
 
 const isActive = (id: string) => {

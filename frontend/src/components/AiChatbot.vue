@@ -318,6 +318,7 @@ const send = async () => {
   messages.value.push({ role: 'user', content: text });
   draft.value = '';
   loading.value = true;
+  apiService.logChatMessage('user', text);
   await scrollBottom();
   try {
     // Historique SANS le message courant (déjà envoyé dans `message`)
@@ -328,6 +329,7 @@ const send = async () => {
       .map((m) => ({ role: m.role, content: m.content }));
     const res = await apiService.chatWithAI(text, history);
     if (res.provider) provider.value = res.provider;
+    apiService.logChatMessage('assistant', res.reply);
     const hideSteps = hasInlineList(res.reply);
     messages.value.push({
       role: 'assistant',

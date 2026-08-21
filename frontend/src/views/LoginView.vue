@@ -87,8 +87,52 @@
             </button>
           </div>
 
+          <div v-if="mode === 'register'" class="flex gap-1 p-1 rounded-lg mb-4" style="background: var(--background)">
+            <button
+              type="button"
+              @click="registerAs = 'internal'"
+              :class="[
+                'flex-1 py-1.5 rounded-md text-xs font-medium transition-all duration-150 cursor-pointer',
+                registerAs === 'internal' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              ]"
+            >
+              Compte interne Tritux
+            </button>
+            <button
+              type="button"
+              @click="registerAs = 'societe'"
+              :class="[
+                'flex-1 py-1.5 rounded-md text-xs font-medium transition-all duration-150 cursor-pointer',
+                registerAs === 'societe' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              ]"
+            >
+              Nouvelle société cliente
+            </button>
+          </div>
+
           <form @submit.prevent="handleSubmit" class="space-y-4">
-            <div v-if="mode === 'register'">
+            <div v-if="mode === 'register' && registerAs === 'societe'">
+              <label class="block text-xs font-medium text-slate-700 mb-1.5">Nom de la société</label>
+              <input
+                type="text"
+                v-model="societeName"
+                placeholder="Ma Société SARL"
+                required
+                class="w-full px-3.5 py-2.5 rounded-lg text-sm border text-slate-900 placeholder-slate-400 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+                style="borderColor: var(--border)"
+              />
+            </div>
+            <div v-if="mode === 'register' && registerAs === 'societe'">
+              <label class="block text-xs font-medium text-slate-700 mb-1.5">Secteur d'activité</label>
+              <input
+                type="text"
+                v-model="secteurActivite"
+                placeholder="Industrie, Télécom, Retail…"
+                class="w-full px-3.5 py-2.5 rounded-lg text-sm border text-slate-900 placeholder-slate-400 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+                style="borderColor: var(--border)"
+              />
+            </div>
+            <div v-if="mode === 'register' && registerAs === 'internal'">
               <label class="block text-xs font-medium text-slate-700 mb-1.5">Nom complet</label>
               <input
                 type="text"
@@ -100,7 +144,7 @@
               />
             </div>
 
-            <div v-if="mode === 'register'">
+            <div v-if="mode === 'register' && registerAs === 'internal'">
               <label class="block text-xs font-medium text-slate-700 mb-1.5">Département</label>
               <select
                 v-model="dept"
@@ -116,6 +160,18 @@
                 <option>IT Support</option>
                 <option>Direction</option>
               </select>
+            </div>
+
+            <div v-if="mode === 'register' && registerAs === 'societe'">
+              <label class="block text-xs font-medium text-slate-700 mb-1.5">Votre nom complet (administrateur société)</label>
+              <input
+                type="text"
+                v-model="name"
+                placeholder="Nom Prénom"
+                required
+                class="w-full px-3.5 py-2.5 rounded-lg text-sm border text-slate-900 placeholder-slate-400 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+                style="borderColor: var(--border)"
+              />
             </div>
 
             <div>
@@ -203,11 +259,14 @@ const authStore = useAuthStore();
 const keycloakOn = isKeycloakEnabled();
 
 const mode = ref<'login' | 'register'>('login');
+const registerAs = ref<'internal' | 'societe'>('societe');
 const showPw = ref(false);
 const email = ref('');
 const password = ref('');
 const name = ref('');
 const dept = ref('');
+const societeName = ref('');
+const secteurActivite = ref('');
 const errorMsg = ref('');
 
 const features = [
@@ -228,13 +287,28 @@ const loginKeycloak = async () => {
 const handleSubmit = async () => {
   errorMsg.value = '';
   try {
-    if (keycloakOn) {
-      await authStore.loginWithKeycloak();
+    if (mode.value === 'register') {
+      if (registerAs.value === 'societe') {
+        await apiService.registerSociete({
+          societeName: societeName.value,
+          secteurActivite: secteurActivite.value || undefined,
+          name: name.value,
+          email: email.value,
+          password: password.value,
+        });
+        await authStore.login(email.value, 'user', password.value);
+        router.push('/');
+        return;
+      }
+      await apiService.register(name.value, email.value, dept.value, password.value);
+      await authStore.login(email.value, 'user', password.value || undefined);
+      router.push('/');
       return;
     }
-    if (mode.value === 'register') {
-      await apiService.register(name.value, email.value, dept.value, password.value);
-    }
+
+    // Note : le SSO Keycloak reste disponible via son propre bouton dédié
+    // ("Connexion via Keycloak"). Le bouton principal utilise toujours le
+    // compte local, indispensable pour les sociétés créées en self-service.
     await authStore.login(email.value, 'user', password.value || undefined);
     router.push('/');
   } catch (e: any) {

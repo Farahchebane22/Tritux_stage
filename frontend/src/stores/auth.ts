@@ -26,10 +26,15 @@ export const useAuthStore = defineStore('auth', () => {
   const persistSession = (loggedUser: User, token?: string) => {
     user.value = loggedUser;
     isLoggedIn.value = true;
+    authMode.value = 'legacy';
     localStorage.setItem('user', JSON.stringify(loggedUser));
     if (token) {
       localStorage.setItem('token', token);
     }
+  };
+
+  const setLocalSession = (loggedUser: User, token?: string) => {
+    persistSession(loggedUser, token);
   };
 
   const bootstrapKeycloak = async () => {
@@ -75,12 +80,13 @@ export const useAuthStore = defineStore('auth', () => {
   };
 
   const login = async (email: string, role: 'user' | 'agent' | 'admin', password?: string) => {
-    if (isKeycloakEnabled()) {
-      await loginWithKeycloak();
-      return;
-    }
+    // Connexion locale (compte créé via /register ou /register-societe).
+    // Indépendante de Keycloak : un compte local n'existe pas dans l'annuaire
+    // Keycloak, donc on ne doit jamais rediriger vers le SSO ici. Le SSO reste
+    // accessible via authStore.loginWithKeycloak() / le bouton dédié.
     try {
       const { user: loggedUser, token } = await apiService.login(email, role, password);
+      authMode.value = 'legacy';
       persistSession(loggedUser, token);
     } catch (error) {
       console.warn('API connection failed, falling back to mock login.', error);
@@ -94,6 +100,7 @@ export const useAuthStore = defineStore('auth', () => {
         matchedUser.email.toLowerCase() === email.toLowerCase()
           ? { ...matchedUser }
           : { ...matchedUser, role };
+      authMode.value = 'legacy';
       persistSession(finalUser);
     }
   };
@@ -145,5 +152,6 @@ export const useAuthStore = defineStore('auth', () => {
     updateProfile,
     changePassword,
     getAccessToken,
+    setLocalSession,
   };
 });

@@ -44,6 +44,24 @@ export const apiService = {
     };
   },
 
+  async registerSociete(payload: {
+    societeName: string;
+    secteurActivite?: string;
+    name: string;
+    email: string;
+    password: string;
+  }): Promise<{ user: User; token?: string; societe: any }> {
+    const response = await api.post('/users/register-societe', payload);
+    if (response.data.token) {
+      localStorage.setItem('token', response.data.token);
+    }
+    return {
+      user: response.data.user,
+      token: response.data.token,
+      societe: response.data.societe,
+    };
+  },
+
   async getCurrentUser(): Promise<User> {
     const response = await api.get('/users/me');
     return response.data.user || response.data;
@@ -246,5 +264,37 @@ export const apiService = {
       params: societeId ? { societeId } : undefined,
     });
     return response.data;
+  },
+
+  async createContract(payload: {
+    type_contrat: string;
+    canal_notification_urgence: string;
+    jours_ouvres?: string;
+    heures_ouvrees: string;
+    date_fin?: string;
+    conditions_texte?: string;
+  }) {
+    const response = await api.post('/contracts/contrats', payload);
+    return response.data;
+  },
+
+  async updateContract(contratId: string, payload: Partial<{
+    type_contrat: string;
+    canal_notification_urgence: string;
+    jours_ouvres: string;
+    heures_ouvrees: string;
+    date_fin: string;
+    conditions_texte: string;
+  }>) {
+    const response = await api.put(`/contracts/contrats/${contratId}`, payload);
+    return response.data;
+  },
+
+  async logChatMessage(role: string, content: string) {
+    try {
+      await api.post('/reports/chat-log', { role, content });
+    } catch {
+      // best-effort, ne bloque jamais l'expérience du chat
+    }
   },
 };

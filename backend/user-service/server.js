@@ -397,6 +397,75 @@ app.post('/register', async (req, res) => {
   }
 });
 
+/**
+ * Inscription self-service d'une nouvelle société cliente.
+ * Crée la société (sans contrat) + son premier utilisateur en CLIENT_ADMIN.
+ * Body: { societeName, secteurActivite?, name, email, password }
+ */
+app.post('/register-societe', async (req, res) => {
+  const { societeName, secteurActivite, name, email, password } = req.body;
+  if (!societeName || !name || !email || !password) {
+    return res.status(400).json({ message: 'Nom de société, nom, email et mot de passe requis' });
+  }
+
+  try {
+    const exists = await findUserByEmail(email);
+    if (exists) {
+      return res.status(400).json({ message: 'Cet email est déjà enregistré' });
+    }
+
+    const societeId = `soc_${Date.now()}`;
+    const userId = `u_${Date.now() + 1}`;
+    const joinDate = new Date().toISOString().split('T')[0];
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    if (useMock) {
+      const newUser = {
+        id: userId,
+        name,
+        email,
+        role: 'CLIENT_ADMIN',
+        department: 'Direction',
+        joinDate,
+        societe_id: societeId,
+        societeId,
+        ticketsCreated: 0,
+        ticketsResolved: 0,
+        passwordHash,
+      };
+      mockUsers.push(newUser);
+      const user = await enrichUser(newUser);
+      return res.json({
+        user,
+        token: signToken(user),
+        societe: { id: societeId, nom: societeName, secteur_activite: secteurActivite || null },
+      });
+    }
+
+    await pool.query(
+      `INSERT INTO societes (id, nom, secteur_activite, contact_principal_nom, contact_principal_email, contact_principal_telephone, date_creation)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [societeId, societeName, secteurActivite || null, name, email, null, joinDate]
+    );
+
+    await pool.query(
+      `INSERT INTO users (id, name, email, role, department, joinDate, password_hash, societe_id)
+       VALUES (?, ?, ?, 'CLIENT_ADMIN', 'Direction', ?, ?, ?)`,
+      [userId, name, email, joinDate, passwordHash, societeId]
+    );
+
+    const row = await findUserById(userId);
+    const user = await enrichUser(row);
+    res.json({
+      user,
+      token: signToken(user),
+      societe: { id: societeId, nom: societeName, secteur_activite: secteurActivite || null },
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur inscription société', error: err.message });
+  }
+});
+
 app.get('/profile', authenticateToken, getProfile);
 app.get('/me', authenticateToken, getProfile);
 

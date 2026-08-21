@@ -15,6 +15,7 @@ import CyberAnalyzeView from '../views/CyberAnalyzeView.vue';
 import ReportsView from '../views/ReportsView.vue';
 import NoContractView from '../views/contract-gate/NoContractView.vue';
 import ContractRecapView from '../views/contract-gate/ContractRecapView.vue';
+import ContractSettingsView from '../views/contract-gate/ContractSettingsView.vue';
 
 const routes = [
   {
@@ -39,6 +40,12 @@ const routes = [
     path: '/contract/recap',
     name: 'contract-recap',
     component: ContractRecapView,
+    meta: { requiresAuth: true, contractGate: true }
+  },
+  {
+    path: '/contract/settings',
+    name: 'contract-settings',
+    component: ContractSettingsView,
     meta: { requiresAuth: true, contractGate: true }
   },
   {
@@ -131,7 +138,13 @@ router.beforeEach(async (to, _from, next) => {
         return next({ name: 'contract-recap' });
       }
     } catch (e) {
-      console.warn('Contract gate check failed', e);
+      // Fail-closed : si la vérification du contrat échoue (réseau, auth, etc.),
+      // on ne laisse PAS passer vers le dashboard sans contrôle. On bloque sur
+      // l'écran "aucun contrat" plutôt que d'autoriser l'accès par défaut.
+      console.error('Contract gate check failed — accès bloqué par sécurité:', e);
+      if (to.name !== 'no-contract') {
+        return next({ name: 'no-contract' });
+      }
     }
   }
 

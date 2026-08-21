@@ -422,6 +422,163 @@ app.get('/contrats/:id', authenticateToken, async (req, res) => {
   }
 });
 
+/**
+ * Création self-service du contrat de maintenance par le CLIENT_ADMIN
+ * d'une société qui n'en a pas encore. Bloquée si un contrat actif existe déjà.
+ */
+const DEFAULT_SLA_BY_TYPE = {
+  '24/7': [
+    { priorite: 'low', delai_reponse_minutes: 240, notification_immediate: 0 },
+    { priorite: 'medium', delai_reponse_minutes: 120, notification_immediate: 0 },
+    { priorite: 'high', delai_reponse_minutes: 60, notification_immediate: 1 },
+    { priorite: 'urgent', delai_reponse_minutes: 15, notification_immediate: 1 },
+  ],
+  '8/5': [
+    { priorite: 'low', delai_reponse_minutes: 480, notification_immediate: 0 },
+    { priorite: 'medium', delai_reponse_minutes: 240, notification_immediate: 0 },
+    { priorite: 'high', delai_reponse_minutes: 120, notification_immediate: 1 },
+    { priorite: 'urgent', delai_reponse_minutes: 30, notification_immediate: 1 },
+  ],
+  '5/7': [
+    { priorite: 'low', delai_reponse_minutes: 480, notification_immediate: 0 },
+    { priorite: 'medium', delai_reponse_minutes: 240, notification_immediate: 0 },
+    { priorite: 'high', delai_reponse_minutes: 120, notification_immediate: 1 },
+    { priorite: 'urgent', delai_reponse_minutes: 30, notification_immediate: 1 },
+  ],
+};
+
+app.post('/contrats', authenticateToken, async (req, res) => {
+  try {
+    const role = mapLegacyRole(req.user.role);
+    if (role !== 'CLIENT_ADMIN') {
+      return res.status(403).json({ message: 'Seul un administrateur de la société peut créer le contrat' });
+    }
+    const societeId = req.user.societeId;
+    if (!societeId) {
+      return res.status(400).json({ message: 'Aucune société associée à ce compte' });
+    }
+
+    const existing = await getActiveContractForSociete(societeId);
+    if (existing) {
+      return res.status(409).json({ message: 'Un contrat actif existe déjà pour votre société' });
+    }
+
+    const {
+      type_contrat = '5/7',
+      canal_notification_urgence = 'email',
+      jours_ouvres,
+      heures_ouvrees = '08:00-18:00',
+      date_fin,
+      conditions_texte,
+    } = req.body;
+
+    const contratId = `ctr_${societeId}_${Date.now()}`;
+    const dateDebut = new Date().toISOString().slice(0, 10);
+    const dateFin = date_fin || new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().slice(0, 10);
+    const joursOuvres = jours_ouvres || (type_contrat === '24/7' ? 'lundi-dimanche' : 'lundi-vendredi');
+    const conditions =
+      conditions_texte ||
+      `Contrat de maintenance ${type_contrat} (${joursOuvres} ${type_contrat === '24/7' ? '24h/24' : heures_ouvrees}). Créé en self-service par l'administrateur de la société.`;
+
+    const regles = (DEFAULT_SLA_BY_TYPE[type_contrat] || DEFAULT_SLA_BY_TYPE['5/7']).map((r) => ({
+      ...r,
+      canal: r.notification_immediate ? canal_notification_urgence : 'email',
+    }));
+
+    if (useMock) {
+      const contrat = {
+        id: contratId,
+        societe_id: societeId,
+        type_contrat,
+        canal_notification_urgence,
+        jours_ouvres: joursOuvres,
+        heures_ouvrees,
+        date_debut: dateDebut,
+        date_fin: dateFin,
+        statut: 'actif',
+        conditions_texte: conditions,
+      };
+      mockContrats.push(contrat);
+      regles.forEach((r, i) =>
+        mockSla.push({ id: `sla_${contratId}_${i}`, contrat_id: contratId, canal: r.canal, ...r })
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO contrats_maintenance
+         (id, societe_id, type_contrat, canal_notification_urgence, jours_ouvres, heures_ouvrees, date_debut, date_fin, statut, conditions_texte)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'actif', ?)`,
+        [contratId, societeId, type_contrat, canal_notification_urgence, joursOuvres, heures_ouvrees, dateDebut, dateFin, conditions]
+      );
+      for (const [i, r] of regles.entries()) {
+        await pool.query(
+          `INSERT INTO sla_regles (id, contrat_id, priorite, delai_reponse_minutes, notification_immediate, canal)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [`sla_${contratId}_${i}`, contratId, r.priorite, r.delai_reponse_minutes, r.notification_immediate, r.canal]
+        );
+      }
+    }
+
+    const contrat = await getActiveContractForSociete(societeId);
+    res.status(201).json({ contrat });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur création contrat', error: err.message });
+  }
+});
+
+/**
+ * Modification du contrat par le CLIENT_ADMIN de la société propriétaire.
+ */
+app.put('/contrats/:id', authenticateToken, async (req, res) => {
+  try {
+    const role = mapLegacyRole(req.user.role);
+    if (role !== 'CLIENT_ADMIN') {
+      return res.status(403).json({ message: 'Seul un administrateur de la société peut modifier le contrat' });
+    }
+
+    const contratId = req.params.id;
+    const current = useMock
+      ? mockContrats.find((c) => c.id === contratId)
+      : (await pool.query('SELECT * FROM contrats_maintenance WHERE id = ?', [contratId]))[0][0];
+
+    if (!current) return res.status(404).json({ message: 'Contrat introuvable' });
+    if (current.societe_id !== req.user.societeId) {
+      return res.status(403).json({ message: 'Ce contrat n’appartient pas à votre société' });
+    }
+
+    const {
+      type_contrat = current.type_contrat,
+      canal_notification_urgence = current.canal_notification_urgence,
+      jours_ouvres = current.jours_ouvres,
+      heures_ouvrees = current.heures_ouvrees,
+      date_fin = current.date_fin,
+      conditions_texte = current.conditions_texte,
+    } = req.body;
+
+    if (useMock) {
+      Object.assign(current, {
+        type_contrat,
+        canal_notification_urgence,
+        jours_ouvres,
+        heures_ouvrees,
+        date_fin,
+        conditions_texte,
+      });
+    } else {
+      await pool.query(
+        `UPDATE contrats_maintenance
+         SET type_contrat = ?, canal_notification_urgence = ?, jours_ouvres = ?, heures_ouvrees = ?, date_fin = ?, conditions_texte = ?
+         WHERE id = ?`,
+        [type_contrat, canal_notification_urgence, jours_ouvres, heures_ouvrees, date_fin, conditions_texte, contratId]
+      );
+    }
+
+    const contrat = await getActiveContractForSociete(req.user.societeId);
+    res.json({ contrat });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur modification contrat', error: err.message });
+  }
+});
+
 app.get('/health', (_req, res) => {
   res.json({ status: 'UP', service: 'contract-service', mock: useMock });
 });
