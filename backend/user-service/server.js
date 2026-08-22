@@ -154,6 +154,28 @@ async function findUserById(id) {
   return rows[0] || null;
 }
 
+async function findUserByKeycloakId(keycloakId) {
+  if (!keycloakId) return null;
+  if (useMock) return mockUsers.find(u => u.keycloak_id === keycloakId || u.keycloakId === keycloakId) || null;
+  const [rows] = await pool.query('SELECT * FROM users WHERE keycloak_id = ?', [keycloakId]);
+  return rows[0] || null;
+}
+
+/**
+ * Résout la ligne locale correspondant à req.user. Pour une session Keycloak,
+ * req.user.id est l'UUID Keycloak (sub), qui ne correspond PAS à l'id de la
+ * ligne locale (u_...). On essaie donc, dans l'ordre : id local direct,
+ * keycloak_id, puis email.
+ */
+async function resolveLocalUser(reqUser) {
+  let row = await findUserById(reqUser.id);
+  if (row) return row;
+  row = await findUserByKeycloakId(reqUser.keycloakId || reqUser.id);
+  if (row) return row;
+  if (reqUser.email) return findUserByEmail(reqUser.email);
+  return null;
+}
+
 async function findUserByEmail(email) {
   if (useMock) {
     return mockUsers.find(u => u.email.toLowerCase() === email.toLowerCase()) || null;
@@ -491,7 +513,7 @@ app.get('/me', authenticateToken, getProfile);
 
 async function getProfile(req, res) {
   try {
-    const row = await findUserById(req.user.id);
+    const row = await resolveLocalUser(req.user);
     if (!row) {
       return res.status(404).json({ message: 'Utilisateur non trouvé' });
     }
@@ -516,14 +538,14 @@ app.put('/profile', authenticateToken, async (req, res) => {
   const cleanEmail = String(email).trim().toLowerCase();
 
   try {
-    const current = await findUserById(req.user.id);
+    const current = await resolveLocalUser(req.user);
     if (!current) {
       return res.status(404).json({ message: 'Utilisateur non trouvé' });
     }
 
     if (cleanEmail !== String(current.email).toLowerCase()) {
       const taken = await findUserByEmail(cleanEmail);
-      if (taken && taken.id !== req.user.id) {
+      if (taken && taken.id !== current.id) {
         return res.status(409).json({ message: 'Cet email est déjà utilisé' });
       }
     }
@@ -538,10 +560,10 @@ app.put('/profile', authenticateToken, async (req, res) => {
 
     await pool.query(
       'UPDATE users SET name = ?, email = ? WHERE id = ?',
-      [cleanName, cleanEmail, req.user.id]
+      [cleanName, cleanEmail, current.id]
     );
 
-    const updated = await findUserById(req.user.id);
+    const updated = await findUserById(current.id);
     const user = await enrichUser(updated);
     res.json({ user, token: signToken(user) });
   } catch (err) {

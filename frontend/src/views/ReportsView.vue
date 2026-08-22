@@ -36,17 +36,83 @@
       <p v-if="error" class="text-sm text-rose-600">{{ error }}</p>
     </form>
 
-    <div v-if="last" class="mt-6 bg-white border border-slate-200 rounded-2xl p-5">
-      <h2 class="font-semibold text-slate-900">Dernier rapport</h2>
-      <pre class="mt-3 text-xs bg-slate-50 p-3 rounded-lg overflow-auto">{{ JSON.stringify(last.resume, null, 2) }}</pre>
-      <a
-        v-if="last.downloadPath"
-        :href="downloadUrl"
-        class="inline-block mt-3 text-sm text-blue-700 font-semibold hover:underline"
-        target="_blank"
-      >
-        Télécharger l’export
-      </a>
+    <div v-if="last" class="mt-6 bg-white border border-slate-200 rounded-2xl overflow-hidden">
+      <div class="px-5 py-4 flex items-center justify-between" style="background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%)">
+        <div>
+          <p class="text-white font-semibold text-sm">Dernier rapport généré</p>
+          <p class="text-slate-400 text-xs mt-0.5">{{ debut }} → {{ fin }} · {{ societeId }}</p>
+        </div>
+        <button
+          v-if="last.downloadPath"
+          type="button"
+          :disabled="downloading"
+          @click="download"
+          class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-900 bg-white hover:bg-slate-100 disabled:opacity-50 cursor-pointer"
+        >
+          ⬇ {{ downloading ? 'Téléchargement…' : 'Télécharger le PDF' }}
+        </button>
+      </div>
+
+      <div class="p-5">
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div class="rounded-xl border border-slate-100 bg-slate-50 p-3 text-center">
+            <p class="text-2xl font-bold text-slate-900">{{ last.resume.ticketsTotal }}</p>
+            <p class="text-[11px] text-slate-500 mt-0.5">Tickets total</p>
+          </div>
+          <div class="rounded-xl border border-slate-100 bg-slate-50 p-3 text-center">
+            <p class="text-2xl font-bold text-emerald-600">{{ last.resume.ticketsResolus }}</p>
+            <p class="text-[11px] text-slate-500 mt-0.5">Résolus</p>
+          </div>
+          <div class="rounded-xl border border-slate-100 bg-slate-50 p-3 text-center">
+            <p class="text-2xl font-bold text-amber-600">{{ last.resume.ticketsOuverts }}</p>
+            <p class="text-[11px] text-slate-500 mt-0.5">Ouverts</p>
+          </div>
+          <div class="rounded-xl border border-slate-100 bg-slate-50 p-3 text-center">
+            <p class="text-2xl font-bold text-blue-600">
+              {{ last.resume.tauxRespectSla != null ? Math.round(last.resume.tauxRespectSla * 100) + '%' : 'N/A' }}
+            </p>
+            <p class="text-[11px] text-slate-500 mt-0.5">Respect SLA</p>
+          </div>
+        </div>
+
+        <div class="grid sm:grid-cols-2 gap-4 mt-5">
+          <div>
+            <p class="text-xs font-semibold text-slate-600 mb-2">Répartition par priorité</p>
+            <div class="space-y-1.5">
+              <div v-for="(count, key) in last.resume.parPriorite" :key="key" class="flex items-center gap-2 text-xs">
+                <span class="w-14 text-slate-500 capitalize">{{ priorityLabels[key] || key }}</span>
+                <div class="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+                  <div
+                    class="h-full rounded-full"
+                    :style="{ width: barWidth(count, last.resume.parPriorite), background: priorityColors[key] || '#94A3B8' }"
+                  ></div>
+                </div>
+                <span class="w-5 text-right font-semibold text-slate-700">{{ count }}</span>
+              </div>
+            </div>
+          </div>
+          <div>
+            <p class="text-xs font-semibold text-slate-600 mb-2">Répartition par statut</p>
+            <div class="space-y-1.5">
+              <div v-for="(count, key) in last.resume.parStatut" :key="key" class="flex items-center gap-2 text-xs">
+                <span class="w-16 text-slate-500 capitalize">{{ statusLabels[key] || key }}</span>
+                <div class="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+                  <div
+                    class="h-full rounded-full bg-indigo-400"
+                    :style="{ width: barWidth(count, last.resume.parStatut) }"
+                  ></div>
+                </div>
+                <span class="w-5 text-right font-semibold text-slate-700">{{ count }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+          <span>Temps moyen de résolution : <strong class="text-slate-700">{{ last.resume.tempsMoyenResolutionHeures ?? 'N/A' }} h</strong></span>
+          <span>Interactions chatbot : <strong class="text-slate-700">{{ last.resume.chatbotInteractions }}</strong></span>
+        </div>
+      </div>
     </div>
 
     <ul class="mt-6 space-y-2">
@@ -80,6 +146,28 @@ const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 const downloadUrl = computed(() =>
   last.value?.id ? `${apiBase}/reports/${last.value.id}/download` : '#'
 );
+
+const priorityLabels: Record<string, string> = { urgent: 'Urgente', high: 'Haute', medium: 'Moyenne', low: 'Basse' };
+const priorityColors: Record<string, string> = { urgent: '#DC2626', high: '#EA580C', medium: '#D97706', low: '#65A30D' };
+const statusLabels: Record<string, string> = { open: 'Ouvert', inprogress: 'En cours', resolved: 'Résolu', closed: 'Fermé' };
+
+const downloading = ref(false);
+const download = async () => {
+  if (!last.value?.id) return;
+  downloading.value = true;
+  try {
+    await apiService.downloadReport(last.value.id, `rapport-${societeId.value}-${last.value.id}.pdf`);
+  } catch (e: any) {
+    error.value = e?.response?.data?.message || 'Téléchargement impossible.';
+  } finally {
+    downloading.value = false;
+  }
+};
+
+const barWidth = (count: number, all: Record<string, number>) => {
+  const max = Math.max(1, ...Object.values(all));
+  return `${Math.max(4, Math.round((count / max) * 100))}%`;
+};
 
 onMounted(async () => {
   try {

@@ -277,7 +277,6 @@ export const apiService = {
     const response = await api.post('/contracts/contrats', payload);
     return response.data;
   },
-
   async updateContract(contratId: string, payload: Partial<{
     type_contrat: string;
     canal_notification_urgence: string;
@@ -296,5 +295,17 @@ export const apiService = {
     } catch {
       // best-effort, ne bloque jamais l'expérience du chat
     }
+  },
+
+  async downloadReport(reportId: string, fileName?: string) {
+    const response = await api.get(`/reports/${reportId}/download`, { responseType: 'blob' });
+    const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName || `${reportId}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
   },
 };

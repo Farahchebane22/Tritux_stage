@@ -217,6 +217,29 @@ export const useAuthStore = defineStore('auth', () => {
 
   const getAccessToken = () => getKeycloakToken() || localStorage.getItem('token') || undefined;
 
+  /**
+   * Reprend le rafraîchissement automatique du token après un rechargement de
+   * page. Le setInterval précédent est perdu à chaque reload (mémoire du
+   * store), donc sans ça le token Keycloak finit par expirer silencieusement
+   * et toutes les requêtes API se mettent à échouer en 401 en cascade.
+   */
+  const resumeSessionIfNeeded = async () => {
+    if (!isLoggedIn.value || authMode.value !== 'keycloak') return;
+    const storedRefresh = localStorage.getItem('refresh_token');
+    if (!storedRefresh) return;
+    try {
+      const tokens = await keycloakRefreshToken(storedRefresh);
+      localStorage.setItem('token', tokens.access_token);
+      localStorage.setItem('refresh_token', tokens.refresh_token);
+      scheduleTokenRefresh(tokens.refresh_token);
+    } catch (e) {
+      console.warn('[auth] Reprise de session Keycloak impossible, déconnexion.', e);
+      await logout();
+    }
+  };
+
+  resumeSessionIfNeeded();
+
   return {
     user,
     isLoggedIn,

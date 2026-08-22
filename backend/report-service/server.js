@@ -7,8 +7,11 @@ import cors from 'cors';
 import mysql from 'mysql2/promise';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import PDFDocument from 'pdfkit';
+import QRCode from 'qrcode';
 import {
   authenticateToken,
   requireRoles,
@@ -20,6 +23,38 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 5004;
 const EXPORT_DIR = path.join(__dirname, 'exports');
+const GATEWAY_PORT = process.env.GATEWAY_PORT || 5000;
+
+/**
+ * Détecte l'adresse IP locale (réseau Wi-Fi/LAN) de la machine, pour que le
+ * lien du QR code soit joignable depuis un téléphone sur le même réseau
+ * (localhost ne fonctionnerait que depuis la machine elle-même).
+ * Peut être forcée via la variable d'environnement PUBLIC_BASE_URL.
+ */
+function getLanBaseUrl() {
+  if (process.env.PUBLIC_BASE_URL) return process.env.PUBLIC_BASE_URL.replace(/\/$/, '');
+  const VIRTUAL_NAME_PATTERN = /virtual|vethernet|docker|wsl|vmware|virtualbox|hyper-v|loopback|tailscale|zerotier|bluetooth|npcap/i;
+  const nets = os.networkInterfaces();
+  const candidates = [];
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name] || []) {
+      if (net.family === 'IPv4' && !net.internal) {
+        candidates.push({ name, address: net.address });
+      }
+    }
+  }
+  // Priorité aux vraies interfaces Wi-Fi/Ethernet, on écarte les adaptateurs
+  // virtuels (Docker, WSL, VPN...) qui ne sont pas joignables depuis un téléphone.
+  const real = candidates.find((c) => !VIRTUAL_NAME_PATTERN.test(c.name));
+  const chosen = real || candidates[0];
+  if (!chosen) return `http://localhost:${GATEWAY_PORT}`;
+  console.log(`[Report Service] URL publique QR détectée : http://${chosen.address}:${GATEWAY_PORT} (interface "${chosen.name}")`);
+  if (candidates.length > 1) {
+    console.log('[Report Service] Autres interfaces disponibles :', candidates.map(c => `${c.name}=${c.address}`).join(', '));
+    console.log('[Report Service] Si le QR ne fonctionne pas, forcez la bonne adresse avec PUBLIC_BASE_URL=http://<votre-ip-wifi>:5000 avant de lancer le service.');
+  }
+  return `http://${chosen.address}:${GATEWAY_PORT}`;
+}
 
 app.use(cors());
 app.use(express.json());
@@ -53,6 +88,11 @@ async function initDb() {
       )`);
     } catch (e) {
       console.warn('[Report Service] chatbot_logs table check failed:', e.message);
+    }
+    try {
+      await c.query('ALTER TABLE rapports_archives ADD COLUMN share_token VARCHAR(64) NULL');
+    } catch {
+      /* colonne déjà existante */
     }
     c.release();
     useMock = false;
@@ -154,101 +194,201 @@ async function collectStats(societeId, debut, fin) {
 const PRIORITY_LABELS = { urgent: 'Urgente', high: 'Haute', medium: 'Moyenne', low: 'Basse' };
 const STATUS_LABELS = { open: 'Ouvert', inprogress: 'En cours', resolved: 'Résolu', closed: 'Fermé' };
 
-function buildPdfDocument(filePath, { societeId, societeNom, debut, fin, stats, tickets, chatLogs }) {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'A4', margin: 50 });
-    const stream = fs.createWriteStream(filePath);
-    doc.pipe(stream);
+// Palette alignée sur la charte de la plateforme (même dégradé que les boutons/en-têtes de l'app)
+const BLUE = '#1D4ED8';
+const PURPLE = '#7C3AED';
+const INK = '#0F172A';
+const MUTED = '#64748B';
+const LINE = '#E2E8F0';
+const PANEL = '#F8FAFC';
+const HEADER_H = 108;
+const PAGE_BOTTOM = 760;
 
-    // --- En-tête ---
-    doc.rect(0, 0, doc.page.width, 90).fill('#0F172A');
-    doc.fillColor('#FFFFFF').fontSize(20).font('Helvetica-Bold').text('Tritux Groupe', 50, 30);
-    doc.fontSize(10).font('Helvetica').fillColor('#94A3B8').text('Rapport de maintenance IT', 50, 55);
-    doc.fontSize(10).fillColor('#CBD5E1').text(`Généré le ${new Date().toLocaleDateString('fr-FR')}`, 50, 68);
-    doc.fillColor('#000000');
+/** Dessine le logo vectoriel Tritux (losange à facettes) en (x, y). */
+function drawLogo(doc, x, y, scale = 1) {
+  const s = scale;
+  doc.save();
+  doc.translate(x, y);
+  doc.polygon([13 * s, 0], [26 * s, 13 * s], [13 * s, 26 * s], [0, 13 * s]).fill('#FFFFFF');
+  doc.polygon([13 * s, 0], [26 * s, 13 * s], [13 * s, 13 * s]).fillOpacity(0.55).fill('#DBEAFE');
+  doc.fillOpacity(1);
+  doc.restore();
+  doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(16 * s).text('TRITUX', x + 34 * s, y + 2 * s);
+  doc.fillColor('#DBEAFE').font('Helvetica').fontSize(7 * s).text('G R O U P E', x + 34 * s, y + 19 * s, { characterSpacing: 1.1 });
+}
 
-    doc.moveDown(4);
-    doc.fontSize(16).font('Helvetica-Bold').fillColor('#0F172A').text(societeNom || societeId);
-    doc.fontSize(10).font('Helvetica').fillColor('#64748B').text(`Période : ${debut} → ${fin}`);
-    doc.moveDown(1);
+/** Bandeau dégradé bleu → violet, identique sur chaque page (plus haut + logo/QR sur la 1ère). */
+function drawHeader(doc, { first, reportId, qrBuffer }) {
+  const h = first ? HEADER_H : 46;
+  const grad = doc.linearGradient(0, 0, doc.page.width, 0);
+  grad.stop(0, BLUE).stop(1, PURPLE);
+  doc.rect(0, 0, doc.page.width, h).fill(grad);
 
-    // --- Cartes de synthèse ---
-    const cardY = doc.y;
-    const cards = [
-      ['Tickets total', stats.ticketsTotal],
-      ['Résolus', stats.ticketsResolus],
-      ['Ouverts', stats.ticketsOuverts],
-      ['Respect SLA', stats.tauxRespectSla != null ? `${Math.round(stats.tauxRespectSla * 100)}%` : 'N/A'],
-    ];
-    const cardW = (doc.page.width - 100 - 3 * 10) / 4;
-    cards.forEach(([label, value], i) => {
-      const x = 50 + i * (cardW + 10);
-      doc.roundedRect(x, cardY, cardW, 55, 6).fillAndStroke('#F8FAFC', '#E2E8F0');
-      doc.fillColor('#1D4ED8').font('Helvetica-Bold').fontSize(18).text(String(value), x, cardY + 10, { width: cardW, align: 'center' });
-      doc.fillColor('#64748B').font('Helvetica').fontSize(8).text(label, x, cardY + 33, { width: cardW, align: 'center' });
-    });
-    doc.y = cardY + 70;
-    doc.moveDown(1);
+  if (first) {
+    drawLogo(doc, 50, 30, 1);
+    doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(11.5).text('RAPPORT DE MAINTENANCE', 50, 72, { characterSpacing: 0.5 });
+    doc.fillColor('#E0E7FF').font('Helvetica').fontSize(8).text(`Édité le ${new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })}`, 50, 87);
 
-    doc.fontSize(9).fillColor('#475569').font('Helvetica').text(
-      `Temps moyen de résolution : ${stats.tempsMoyenResolutionHeures ?? 'N/A'} h    |    Interactions chatbot : ${stats.chatbotInteractions}`
-    );
-    doc.moveDown(1.2);
-
-    // --- Tableau tickets ---
-    doc.fontSize(13).font('Helvetica-Bold').fillColor('#0F172A').text('Historique des tickets');
-    doc.moveDown(0.4);
-
-    if (!tickets.length) {
-      doc.fontSize(9).font('Helvetica').fillColor('#94A3B8').text('Aucun ticket sur cette période.');
-    } else {
-      const colX = { id: 50, title: 110, prio: 300, status: 370, date: 440 };
-      doc.fontSize(8).font('Helvetica-Bold').fillColor('#64748B');
-      doc.text('ID', colX.id, doc.y, { continued: false });
-      doc.text('Titre', colX.title, doc.y - 10);
-      doc.text('Priorité', colX.prio, doc.y - 10);
-      doc.text('Statut', colX.status, doc.y - 10);
-      doc.text('Date', colX.date, doc.y - 10);
-      doc.moveDown(0.3);
-      doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor('#E2E8F0').stroke();
-      doc.moveDown(0.3);
-
-      tickets.forEach((t) => {
-        if (doc.y > 720) doc.addPage();
-        const rowY = doc.y;
-        doc.fontSize(8).font('Helvetica').fillColor('#0F172A');
-        doc.text(t.id, colX.id, rowY, { width: 55 });
-        doc.text((t.title || '').slice(0, 38), colX.title, rowY, { width: 185 });
-        doc.text(PRIORITY_LABELS[t.priority] || t.priority, colX.prio, rowY, { width: 65 });
-        doc.text(STATUS_LABELS[t.status] || t.status, colX.status, rowY, { width: 65 });
-        doc.text(new Date(t.created_at).toLocaleDateString('fr-FR'), colX.date, rowY, { width: 90 });
-        doc.moveDown(0.6);
-      });
+    if (qrBuffer) {
+      const qrSize = 78;
+      const qrX = 545 - qrSize;
+      const qrY = (h - qrSize) / 2;
+      doc.roundedRect(qrX - 6, qrY - 6, qrSize + 12, qrSize + 12, 6).fill('#FFFFFF');
+      doc.image(qrBuffer, qrX, qrY, { width: qrSize, height: qrSize });
+      doc.fillColor('#FFFFFF').font('Helvetica').fontSize(6).text('Scanner pour ouvrir le PDF', qrX - 10, qrY + qrSize + 8, { width: qrSize + 20, align: 'center' });
     }
+  } else {
+    doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(9).text('TRITUX GROUPE', 50, 16);
+    doc.fillColor('#E0E7FF').font('Helvetica').fontSize(8).text(`Réf. ${reportId}`, 300, 16, { width: 245, align: 'right' });
+  }
+  doc.y = h + 24;
+}
 
-    doc.moveDown(1);
-    if (doc.y > 680) doc.addPage();
+function addFooter(doc, pageLabel) {
+  const bottom = doc.page.height - 40;
+  doc.save();
+  doc.moveTo(50, bottom).lineTo(545, bottom).lineWidth(0.5).strokeColor(LINE).stroke();
+  doc.fontSize(7.5).font('Helvetica').fillColor('#94A3B8');
+  doc.text('Tritux Groupe - Plateforme de maintenance IT - Document confidentiel', 50, bottom + 6, { width: 300 });
+  doc.text(pageLabel, 50, bottom + 6, { width: 495, align: 'right' });
+  doc.restore();
+}
 
-    // --- Historique chatbot ---
-    doc.fontSize(13).font('Helvetica-Bold').fillColor('#0F172A').text('Historique des échanges avec l’assistant IA');
-    doc.moveDown(0.4);
+/** Vérifie l'espace restant ; change de page si nécessaire (évite les titres orphelins). */
+function ensureSpace(doc, needed, ctx) {
+  if (doc.y + needed > PAGE_BOTTOM) {
+    doc.addPage();
+    drawHeader(doc, ctx);
+  }
+}
 
-    if (!chatLogs.length) {
-      doc.fontSize(9).font('Helvetica').fillColor('#94A3B8').text('Aucun échange avec le chatbot enregistré sur cette période.');
-    } else {
-      chatLogs.forEach((m) => {
-        if (doc.y > 730) doc.addPage();
-        const isUser = m.role === 'user';
-        doc.fontSize(8).font('Helvetica-Bold').fillColor(isUser ? '#1D4ED8' : '#7C3AED')
-          .text(`${isUser ? (m.user_name || 'Utilisateur') : 'Assistant IA'} — ${new Date(m.created_at).toLocaleString('fr-FR')}`);
-        doc.fontSize(9).font('Helvetica').fillColor('#334155').text(m.content, { width: 495 });
-        doc.moveDown(0.5);
+async function buildPdfDocument(filePath, { societeId, societeNom, debut, fin, stats, tickets, chatLogs, reportId, publicUrl }) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ size: 'A4', margin: 50, bufferPages: true, autoFirstPage: false });
+      const stream = fs.createWriteStream(filePath);
+      doc.pipe(stream);
+
+      const qrDataUrl = await QRCode.toDataURL(publicUrl, {
+        margin: 2,
+        width: 300,
+        errorCorrectionLevel: 'M',
+        color: { dark: '#1E1B4B', light: '#FFFFFF' },
       });
-    }
+      const qrBuffer = Buffer.from(qrDataUrl.split(',')[1], 'base64');
+      const ctx = { first: false, reportId, qrBuffer };
 
-    doc.end();
-    stream.on('finish', resolve);
-    stream.on('error', reject);
+      doc.addPage();
+      drawHeader(doc, { first: true, reportId, qrBuffer });
+
+      // ===== Bloc société =====
+      doc.roundedRect(50, doc.y, 495, 50, 8).fillAndStroke(PANEL, LINE);
+      doc.fillColor(INK).font('Helvetica-Bold').fontSize(14).text(societeNom || societeId, 65, doc.y + 11);
+      doc.fillColor(MUTED).font('Helvetica').fontSize(9).text(
+        `Période couverte : ${new Date(debut).toLocaleDateString('fr-FR')} au ${new Date(fin).toLocaleDateString('fr-FR')}`,
+        65, doc.y + 29
+      );
+      doc.y += 66;
+
+      // ===== Cartes de synthèse =====
+      const cardY = doc.y;
+      const cards = [
+        ['TICKETS TOTAL', stats.ticketsTotal, INK],
+        ['RÉSOLUS', stats.ticketsResolus, '#059669'],
+        ['OUVERTS', stats.ticketsOuverts, '#D97706'],
+        ['RESPECT SLA', stats.tauxRespectSla != null ? `${Math.round(stats.tauxRespectSla * 100)}%` : 'N/A', BLUE],
+      ];
+      const cardW = (495 - 3 * 10) / 4;
+      cards.forEach(([label, value, color], i) => {
+        const x = 50 + i * (cardW + 10);
+        doc.roundedRect(x, cardY, cardW, 58, 8).fillAndStroke('#FFFFFF', LINE);
+        doc.rect(x, cardY, cardW, 3).fill(color);
+        doc.fillColor(color).font('Helvetica-Bold').fontSize(19).text(String(value), x + 10, cardY + 14, { width: cardW - 16 });
+        doc.fillColor('#94A3B8').font('Helvetica-Bold').fontSize(6.5).text(label, x + 10, cardY + 38, { width: cardW - 16, characterSpacing: 0.3 });
+      });
+      doc.y = cardY + 72;
+
+      doc.fontSize(8.5).fillColor(MUTED).font('Helvetica').text(
+        `Temps moyen de résolution : ${stats.tempsMoyenResolutionHeures ?? 'N/A'} h    -    Interactions assistant IA : ${stats.chatbotInteractions}`,
+        50, doc.y
+      );
+      doc.y += 22;
+
+      // ===== Historique des tickets =====
+      ensureSpace(doc, 60, ctx);
+      doc.font('Helvetica-Bold').fontSize(12.5).fillColor(INK).text('Historique des tickets', 50, doc.y);
+      doc.moveTo(50, doc.y + 4).lineTo(140, doc.y + 4).lineWidth(2).strokeColor(PURPLE).stroke();
+      doc.y += 18;
+
+      if (!tickets.length) {
+        doc.fontSize(9).font('Helvetica').fillColor('#94A3B8').text('Aucun ticket sur cette période.', 50, doc.y);
+        doc.y += 16;
+      } else {
+        const colX = { id: 58, title: 118, prio: 308, status: 378, date: 452 };
+        ensureSpace(doc, 26, ctx);
+        const headerY = doc.y;
+        doc.roundedRect(50, headerY, 495, 20, 4).fill(INK);
+        doc.fontSize(7.5).font('Helvetica-Bold').fillColor('#E2E8F0');
+        doc.text('ID', colX.id, headerY + 6, { width: 55 });
+        doc.text('TITRE', colX.title, headerY + 6, { width: 185 });
+        doc.text('PRIORITÉ', colX.prio, headerY + 6, { width: 65 });
+        doc.text('STATUT', colX.status, headerY + 6, { width: 65 });
+        doc.text('DATE', colX.date, headerY + 6, { width: 90 });
+        doc.y = headerY + 24;
+
+        tickets.forEach((t, idx) => {
+          ensureSpace(doc, 20, ctx);
+          const rowY = doc.y;
+          if (idx % 2 === 0) doc.rect(50, rowY - 2, 495, 19).fill('#F1F5F9');
+          doc.fillColor(INK).font('Helvetica').fontSize(8);
+          doc.text(t.id, colX.id, rowY + 2, { width: 55 });
+          doc.text((t.title || '').slice(0, 34), colX.title, rowY + 2, { width: 185 });
+          doc.fillColor(
+            { urgent: '#DC2626', high: '#EA580C', medium: '#B45309', low: '#65A30D' }[t.priority] || MUTED
+          ).font('Helvetica-Bold').text(PRIORITY_LABELS[t.priority] || t.priority, colX.prio, rowY + 2, { width: 65 });
+          doc.fillColor(INK).font('Helvetica').text(STATUS_LABELS[t.status] || t.status, colX.status, rowY + 2, { width: 65 });
+          doc.fillColor(MUTED).text(new Date(t.created_at).toLocaleDateString('fr-FR'), colX.date, rowY + 2, { width: 90 });
+          doc.y = rowY + 19;
+        });
+      }
+
+      doc.y += 16;
+
+      // ===== Historique chatbot =====
+      ensureSpace(doc, 60, ctx);
+      doc.font('Helvetica-Bold').fontSize(12.5).fillColor(INK).text('Échanges avec l’assistant IA', 50, doc.y);
+      doc.moveTo(50, doc.y + 4).lineTo(140, doc.y + 4).lineWidth(2).strokeColor(PURPLE).stroke();
+      doc.y += 18;
+
+      if (!chatLogs.length) {
+        doc.fontSize(9).font('Helvetica').fillColor('#94A3B8').text('Aucun échange avec le chatbot enregistré sur cette période.', 50, doc.y);
+      } else {
+        chatLogs.forEach((m) => {
+          const isUser = m.role === 'user';
+          const textHeight = doc.heightOfString(m.content, { width: 480 });
+          ensureSpace(doc, textHeight + 34, ctx);
+
+          doc.roundedRect(50, doc.y, 4, textHeight + 24, 2).fill(isUser ? BLUE : PURPLE);
+          doc.fillColor(isUser ? BLUE : PURPLE).font('Helvetica-Bold').fontSize(8)
+            .text(`${isUser ? (m.user_name || 'Utilisateur') : 'Assistant IA Tritux'}   ${new Date(m.created_at).toLocaleString('fr-FR')}`, 62, doc.y);
+          doc.fontSize(9).font('Helvetica').fillColor('#334155').text(m.content, 62, doc.y + 13, { width: 480 });
+          doc.y += textHeight + 24;
+        });
+      }
+
+      // ===== Pagination =====
+      const range = doc.bufferedPageRange();
+      for (let i = 0; i < range.count; i++) {
+        doc.switchToPage(range.start + i);
+        addFooter(doc, `Page ${i + 1} / ${range.count}`);
+      }
+
+      doc.end();
+      stream.on('finish', resolve);
+      stream.on('error', reject);
+    } catch (e) {
+      reject(e);
+    }
   });
 }
 
@@ -268,9 +408,11 @@ app.post(
 
       const { stats, tickets, chatLogs } = await collectStats(societeId, periodeDebut, periodeFin);
       const id = `rpt_${Date.now()}`;
+      const shareToken = crypto.randomBytes(20).toString('hex');
       const now = new Date().toISOString();
       const fileName = `${id}.pdf`;
       const filePath = path.join(EXPORT_DIR, fileName);
+      const publicUrl = `${getLanBaseUrl()}/api/reports/public/${shareToken}`;
 
       let societeNom = societeId;
       try {
@@ -288,6 +430,8 @@ app.post(
         stats,
         tickets,
         chatLogs,
+        reportId: id,
+        publicUrl,
       });
 
       const archive = {
@@ -298,6 +442,7 @@ app.post(
         date_generation: now,
         contenu_resume: stats,
         export_pdf_path: filePath,
+        share_token: shareToken,
       };
 
       if (useMock) {
@@ -305,8 +450,8 @@ app.post(
       } else {
         await pool.query(
           `INSERT INTO rapports_archives
-           (id, societe_id, periode_debut, periode_fin, date_generation, contenu_resume, export_pdf_path)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           (id, societe_id, periode_debut, periode_fin, date_generation, contenu_resume, export_pdf_path, share_token)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             id,
             societeId,
@@ -315,6 +460,7 @@ app.post(
             now,
             JSON.stringify(stats),
             filePath,
+            shareToken,
           ]
         );
       }
@@ -327,6 +473,7 @@ app.post(
         dateGeneration: now,
         resume: stats,
         downloadPath: `/api/reports/${id}/download`,
+        publicUrl,
       });
     } catch (err) {
       res.status(500).json({ message: err.message });
@@ -397,6 +544,34 @@ app.get('/:id/download', authenticateToken, async (req, res) => {
     res.download(p);
   } catch (err) {
     res.status(500).json({ message: err.message });
+  }
+});
+
+/**
+ * Téléchargement PUBLIC (sans authentification) via le jeton secret encodé
+ * dans le QR code du PDF. Permet d'ouvrir le rapport directement depuis un
+ * téléphone qui scanne le code, sans avoir à se connecter à l'application.
+ * Sécurité : jeton aléatoire 160 bits, non énumérable, propre à ce rapport.
+ */
+app.get('/public/:token', async (req, res) => {
+  try {
+    let archive;
+    if (useMock) {
+      archive = mockArchives.find((a) => a.share_token === req.params.token);
+    } else {
+      const [rows] = await pool.query('SELECT * FROM rapports_archives WHERE share_token = ?', [
+        req.params.token,
+      ]);
+      archive = rows[0];
+    }
+    if (!archive) return res.status(404).send('Lien invalide ou expiré.');
+    const p = archive.export_pdf_path;
+    if (!p || !fs.existsSync(p)) return res.status(404).send('Fichier introuvable.');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="rapport-${archive.societe_id}.pdf"`);
+    fs.createReadStream(p).pipe(res);
+  } catch (err) {
+    res.status(500).send('Erreur serveur.');
   }
 });
 
