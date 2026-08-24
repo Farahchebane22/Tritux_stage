@@ -26,8 +26,12 @@ export const useTicketsStore = defineStore('tickets', () => {
   const visibleForUser = (list: Ticket[]) => {
     const u = authStore.user;
     if (!u) return [];
-    if (u.role === 'admin') return list;
-    if (u.role === 'agent') return list.filter(t => t.assignedTo?.id === u.id);
+    const role = u.role;
+    if (role === 'admin' || role === 'SUPER_ADMIN') return list;
+    if (role === 'agent' || role === 'AGENT_IT') return list.filter(t => t.assignedTo?.id === u.id);
+    if (role === 'CLIENT_ADMIN' && (u as any).societeId) {
+      return list.filter(t => (t as any).societeId === (u as any).societeId || t.createdBy.id === u.id);
+    }
     return list.filter(t => t.createdBy.id === u.id);
   };
 

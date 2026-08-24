@@ -2,6 +2,7 @@
 import axios from 'axios';
 import type { Ticket, TicketStatus, TicketPriority, TicketCategory, Comment, Notification, User, CyberAnalysis } from '../types';
 import { splitAgentsByCategory } from '../utils/agentCategories';
+import { decodeJwtPayload, keycloakRefreshToken, isKeycloakEnabled } from '../auth/keycloak';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
@@ -12,13 +13,102 @@ const api = axios.create({
   },
 });
 
-api.interceptors.request.use((config) => {
+// Évite les rafraîchissements concurrents si plusieurs requêtes partent en même temps
+let refreshInFlight: Promise<string | null> | null = null;
+
+/**
+ * Vérifie l'expiration du token AVANT chaque requête (pas seulement via un
+ * minuteur en tâche de fond, qui peut arriver trop tard si l'onglet était
+ * inactif ou rechargement récent). Rafraîchit proactivement si expiré ou
+ * expire dans moins de 20s, en utilisant le refresh_token Keycloak.
+ */
+async function ensureFreshToken(): Promise<string | null> {
   const token = localStorage.getItem('token');
+  if (!token || !isKeycloakEnabled()) return token;
+
+  let exp: number | undefined;
+  try {
+    exp = decodeJwtPayload(token)?.exp;
+  } catch {
+    return token;
+  }
+  if (!exp) return token;
+
+  const expiresInMs = exp * 1000 - Date.now();
+  if (expiresInMs > 45_000) return token;
+
+  const refreshToken = localStorage.getItem('refresh_token');
+  if (!refreshToken) return token;
+
+  if (!refreshInFlight) {
+    refreshInFlight = keycloakRefreshToken(refreshToken)
+      .then((tokens) => {
+        localStorage.setItem('token', tokens.access_token);
+        localStorage.setItem('refresh_token', tokens.refresh_token);
+        return tokens.access_token;
+      })
+      .catch((e) => {
+        console.warn('[api] Rafraîchissement du token échoué :', e);
+        return null;
+      })
+      .finally(() => {
+        refreshInFlight = null;
+      });
+  }
+  return refreshInFlight;
+}
+
+api.interceptors.request.use(async (config) => {
+  const token = await ensureFreshToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
 });
+
+/**
+ * Filet de sécurité : si malgré la vérification préalable une requête
+ * échoue quand même en 401 (décalage d'horloge, marge trop courte, token
+ * expiré entre la vérification et l'envoi…), on rafraîchit le token UNE
+ * fois et on rejoue la requête originale avant d'abandonner.
+ */
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const original = error.config;
+    if (
+      error.response?.status === 401 &&
+      isKeycloakEnabled() &&
+      !original._retried
+    ) {
+      original._retried = true;
+      const refreshToken = localStorage.getItem('refresh_token');
+      if (refreshToken) {
+        try {
+          if (!refreshInFlight) {
+            refreshInFlight = keycloakRefreshToken(refreshToken)
+              .then((tokens) => {
+                localStorage.setItem('token', tokens.access_token);
+                localStorage.setItem('refresh_token', tokens.refresh_token);
+                return tokens.access_token;
+              })
+              .finally(() => {
+                refreshInFlight = null;
+              });
+          }
+          const newToken = await refreshInFlight;
+          if (newToken) {
+            original.headers.Authorization = `Bearer ${newToken}`;
+            return api.request(original);
+          }
+        } catch (e) {
+          console.warn('[api] Rejeu après 401 impossible, session expirée:', e);
+        }
+      }
+    }
+    return Promise.reject(error);
+  }
+);
 
 export const apiService = {
   // Authentication
@@ -263,6 +353,21 @@ export const apiService = {
     const response = await api.get('/reports', {
       params: societeId ? { societeId } : undefined,
     });
+    return response.data;
+  },
+
+  async getSocietes(): Promise<any[]> {
+    const response = await api.get('/contracts/societes');
+    return response.data;
+  },
+
+  async getSocieteContrats(societeId: string): Promise<any[]> {
+    const response = await api.get(`/contracts/societes/${societeId}/contrats`);
+    return response.data;
+  },
+
+  async getContractById(contratId: string): Promise<any> {
+    const response = await api.get(`/contracts/contrats/${contratId}`);
     return response.data;
   },
 

@@ -476,7 +476,10 @@ const accessDenied = ref(false);
 const ticketId = computed(() => route.params.id as string);
 const ticket = computed(() => ticketsStore.tickets.find(t => t.id === ticketId.value));
 const currentUser = computed(() => authStore.user);
-const isAgent = computed(() => currentUser.value?.role === 'agent' || currentUser.value?.role === 'admin');
+const isAgent = computed(() => {
+  const role = currentUser.value?.role;
+  return role === 'agent' || role === 'admin' || role === 'AGENT_IT' || role === 'SUPER_ADMIN';
+});
 
 const currentAssigneeOutsideLists = computed(() => {
   const id = ticket.value?.assignedTo?.id;

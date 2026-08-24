@@ -620,30 +620,32 @@ app.get('/agents', authenticateToken, async (req, res) => {
     let agents;
     if (useMock) {
       agents = mockUsers
-        .filter(u => u.role === 'agent')
+        .filter(u => mapLegacyRole(u.role) === 'AGENT_IT')
         .map(u => mapUserRow(u));
     } else {
       let rows;
       try {
         [rows] = await pool.query(
-          "SELECT id, name, email, role, department, joinDate, specialties FROM users WHERE role = 'agent'"
+          'SELECT id, name, email, role, department, joinDate, specialties FROM users'
         );
       } catch {
         [rows] = await pool.query(
-          "SELECT id, name, email, role, department, joinDate FROM users WHERE role = 'agent'"
+          'SELECT id, name, email, role, department, joinDate FROM users'
         );
       }
       const defaultSpecs = {
         u2: ['network', 'security', 'account'],
         u3: ['software', 'email', 'hardware'],
       };
-      agents = rows.map(r => {
-        const mapped = mapUserRow(r);
-        if (!mapped.specialties?.length && defaultSpecs[r.id]) {
-          mapped.specialties = defaultSpecs[r.id];
-        }
-        return mapped;
-      });
+      agents = rows
+        .filter(r => mapLegacyRole(r.role) === 'AGENT_IT')
+        .map(r => {
+          const mapped = mapUserRow(r);
+          if (!mapped.specialties?.length && defaultSpecs[r.id]) {
+            mapped.specialties = defaultSpecs[r.id];
+          }
+          return mapped;
+        });
     }
 
     if (category) {

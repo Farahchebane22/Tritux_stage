@@ -132,6 +132,9 @@
                   <span class="text-xs text-slate-600 truncate max-w-[120px]">{{ ticket.createdBy.name }}</span>
                 </div>
               </td>
+              <td v-if="isStaff" class="px-4 py-3.5">
+                <span class="text-xs text-slate-500">{{ societeName(ticket.societeId) }}</span>
+              </td>
               <td class="px-4 py-3.5">
                 <span v-if="ticket.assignedTo" class="text-xs text-slate-600">{{ ticket.assignedTo.name }}</span>
                 <span v-else class="text-xs text-slate-300">Non assigné</span>
@@ -164,9 +167,10 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRouter, useRoute } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useTicketsStore } from '../stores/tickets';
+import { apiService } from '../services/api';
 import Badge from '../components/ui/Badge.vue';
 import {
   Search as SearchIcon,
@@ -176,6 +180,7 @@ import {
 import type { TicketStatus, TicketPriority, TicketCategory } from '../types';
 
 const router = useRouter();
+const route = useRoute();
 const authStore = useAuthStore();
 const ticketsStore = useTicketsStore();
 
@@ -183,17 +188,40 @@ const search = ref('');
 const filterStatus = ref<TicketStatus | 'all'>('all');
 const filterPriority = ref<TicketPriority | 'all'>('all');
 const filterCategory = ref<TicketCategory | 'all'>('all');
+const societeFilter = ref<string | null>((route.query.societeId as string) || null);
+const societeNames = ref<Record<string, string>>({});
+
+const societeName = (id?: string | null) => (id ? societeNames.value[id] || id : '—');
 
 onMounted(async () => {
   await ticketsStore.fetchTickets();
+  if (isStaff.value) {
+    try {
+      const societes = await apiService.getSocietes();
+      societeNames.value = Object.fromEntries(societes.map((s: any) => [s.id, s.nom]));
+    } catch {
+      /* pas bloquant pour l'affichage des tickets */
+    }
+  }
 });
 
-const isStaff = computed(() => authStore.user?.role === 'agent' || authStore.user?.role === 'admin');
-const isAdmin = computed(() => authStore.user?.role === 'admin');
+const isStaff = computed(() => {
+  const r = authStore.user?.role;
+  return r === 'agent' || r === 'admin' || r === 'AGENT_IT' || r === 'SUPER_ADMIN';
+});
+const isAdmin = computed(() => {
+  const r = authStore.user?.role;
+  return r === 'admin' || r === 'SUPER_ADMIN';
+});
+const isAgentOnly = computed(() => {
+  const r = authStore.user?.role;
+  return r === 'agent' || r === 'AGENT_IT';
+});
 
 const listTitle = computed(() => {
+  if (societeFilter.value) return `Tickets — ${societeName(societeFilter.value)}`;
   if (isAdmin.value) return 'Tous les tickets';
-  if (authStore.user?.role === 'agent') return 'Mes tickets assignés';
+  if (isAgentOnly.value) return 'Mes tickets assignés';
   return 'Mes tickets';
 });
 
@@ -225,7 +253,7 @@ const categoryLabels: Record<TicketCategory, string> = {
 
 const tableHeaders = computed(() => {
   const base = ['ID', 'Titre', 'Catégorie', 'Priorité', 'Statut'];
-  if (isStaff.value) base.push('Créé par');
+  if (isStaff.value) base.push('Créé par', 'Société');
   base.push('Assigné à', 'Mise à jour');
   return base;
 });
@@ -235,8 +263,8 @@ const filteredTickets = computed(() => {
   const role = authStore.user?.role;
   return ticketsStore.tickets.filter(t => {
     let userMatch = false;
-    if (role === 'admin') userMatch = true;
-    else if (role === 'agent') userMatch = t.assignedTo?.id === uid;
+    if (role === 'admin' || role === 'SUPER_ADMIN') userMatch = true;
+    else if (role === 'agent' || role === 'AGENT_IT') userMatch = t.assignedTo?.id === uid;
     else userMatch = t.createdBy.id === uid;
 
     const searchMatch = !search.value ||
@@ -247,8 +275,9 @@ const filteredTickets = computed(() => {
     const statusMatch = filterStatus.value === 'all' || t.status === filterStatus.value;
     const priorityMatch = filterPriority.value === 'all' || t.priority === filterPriority.value;
     const catMatch = filterCategory.value === 'all' || t.category === filterCategory.value;
+    const societeMatch = !societeFilter.value || (t as any).societeId === societeFilter.value;
 
-    return userMatch && searchMatch && statusMatch && priorityMatch && catMatch;
+    return userMatch && searchMatch && statusMatch && priorityMatch && catMatch && societeMatch;
   });
 });
 

@@ -35,6 +35,8 @@
       </div>
     </div>
 
+    <!-- Popup : ticket créé hors des heures couvertes par le contrat (rendue à la fin du template) -->
+
     <div v-else>
       <div class="mb-6">
         <h1 class="font-display text-2xl font-bold text-slate-900">Créer un ticket</h1>
@@ -269,6 +271,38 @@
         </div>
       </form>
     </div>
+
+    <!-- Popup : ticket créé hors des heures couvertes par le contrat -->
+    <div
+      v-if="showDeferredPopup"
+      class="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style="background: rgba(15, 23, 42, 0.5)"
+      @click.self="showDeferredPopup = false"
+    >
+      <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl">
+        <div class="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center mb-4 text-xl">⏰</div>
+        <h3 class="font-display text-lg font-bold text-slate-900 mb-2">Ticket créé hors des heures de votre contrat</h3>
+        <p class="text-sm text-slate-600 leading-relaxed mb-3">
+          Votre société dispose d'un contrat <strong>{{ deferredInfo.typeContrat }}</strong>
+          ({{ deferredInfo.joursOuvres || 'jours ouvrés' }}{{ deferredInfo.heuresOuvrees ? `, ${deferredInfo.heuresOuvrees}` : '' }}).
+          Ce ticket a été créé en dehors de cette fenêtre de couverture.
+        </p>
+        <div class="rounded-xl bg-amber-50 border border-amber-100 p-3.5 mb-5">
+          <p class="text-sm text-amber-900">
+            Il sera pris en charge à la prochaine reprise du support :
+            <strong>{{ deferredInfo.resumeLabel }}</strong>.
+          </p>
+        </div>
+        <button
+          type="button"
+          @click="showDeferredPopup = false"
+          class="w-full py-2.5 rounded-xl text-sm font-semibold text-white cursor-pointer"
+          style="background: linear-gradient(135deg, #1D4ED8 0%, #7C3AED 100%)"
+        >
+          J'ai compris
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -277,6 +311,7 @@ import { ref, watch, onUnmounted, onMounted, nextTick } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useTicketsStore } from '../stores/tickets';
 import { useAiChatStore } from '../stores/aiChat';
+import { apiService } from '../services/api';
 import {
   Upload as UploadIcon,
   Sparkles as SparklesIcon,
@@ -305,6 +340,8 @@ const submitted = ref(false);
 const dragOver = ref(false);
 const createdTicketId = ref('');
 const applied = ref(false);
+const showDeferredPopup = ref(false);
+const deferredInfo = ref({ typeContrat: '', joursOuvres: '', heuresOuvrees: '', resumeLabel: '' });
 
 const fileInput = ref<HTMLInputElement | null>(null);
 let aiTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -453,7 +490,7 @@ const openSuggestionChat = () => {
 const handleSubmit = async () => {
   const finalCategory = category.value || aiSuggestion.value?.category || 'other';
   const finalPriority = priority.value || aiSuggestion.value?.priority || 'medium';
-  
+
   const newTicket = await ticketsStore.createTicket(
     title.value,
     description.value,
@@ -462,11 +499,42 @@ const handleSubmit = async () => {
     files.value,
     aiSuggestion.value || undefined
   );
-  
+
   if (newTicket) {
     createdTicketId.value = newTicket.id;
+
+    if (newTicket.slaDeferred) {
+      let contratLabel = { typeContrat: '', joursOuvres: '', heuresOuvrees: '' };
+      try {
+        if (newTicket.contratId) {
+          const contrat = await apiService.getContractById(newTicket.contratId);
+          contratLabel = {
+            typeContrat: contrat?.type_contrat || '',
+            joursOuvres: contrat?.jours_ouvres || '',
+            heuresOuvrees: contrat?.heures_ouvrees || '',
+          };
+        }
+      } catch {
+        /* affichage dégradé sans le détail du contrat si l'appel échoue */
+      }
+
+      const resumeDate = newTicket.slaResumeAt ? new Date(newTicket.slaResumeAt) : null;
+      deferredInfo.value = {
+        ...contratLabel,
+        resumeLabel: resumeDate
+          ? resumeDate.toLocaleString('fr-FR', {
+              weekday: 'long',
+              day: 'numeric',
+              month: 'long',
+              hour: '2-digit',
+              minute: '2-digit',
+            })
+          : 'au prochain créneau ouvré',
+      };
+      showDeferredPopup.value = true;
+    }
   }
-  
+
   submitted.value = true;
 };
 

@@ -189,6 +189,50 @@ async function initDb() {
 
 initDb();
 
+/**
+ * Résout l'ID local (users.id) correspondant à req.user, indispensable pour
+ * les sessions Keycloak où req.user.id est l'UUID Keycloak (sub), qui ne
+ * correspond à aucune ligne de la table locale `users` (contrainte FK).
+ * Auto-provisionne une ligne minimale si aucune n'existe encore (garde-fou).
+ */
+async function resolveLocalUserId(reqUser) {
+  if (useMock || !pool) return reqUser.id;
+  try {
+    const [byId] = await pool.query('SELECT id FROM users WHERE id = ?', [reqUser.id]);
+    if (byId[0]) return byId[0].id;
+
+    if (reqUser.keycloakId) {
+      const [byKc] = await pool.query('SELECT id FROM users WHERE keycloak_id = ?', [reqUser.keycloakId]);
+      if (byKc[0]) return byKc[0].id;
+    }
+
+    if (reqUser.email) {
+      const [byEmail] = await pool.query('SELECT id FROM users WHERE email = ?', [reqUser.email]);
+      if (byEmail[0]) return byEmail[0].id;
+    }
+
+    // Aucune ligne trouvée : auto-provisionne pour ne pas bloquer l'action en cours.
+    const newId = `u_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    await pool.query(
+      'INSERT INTO users (id, name, email, role, department, joinDate, societe_id, keycloak_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        newId,
+        reqUser.name || reqUser.email || 'Utilisateur',
+        reqUser.email || `${newId}@inconnu.local`,
+        mapLegacyRole(reqUser.role) || 'CLIENT_USER',
+        null,
+        new Date().toISOString().split('T')[0],
+        reqUser.societeId || null,
+        reqUser.keycloakId || null,
+      ]
+    );
+    return newId;
+  } catch (e) {
+    console.warn('[Ticket Service] resolveLocalUserId a échoué, repli sur req.user.id:', e.message);
+    return reqUser.id;
+  }
+}
+
 function mapAttachment(row) {
   return {
     id: row.id,
@@ -312,9 +356,24 @@ function toPublicNotification(n) {
   };
 }
 
-function resolveAgent(assignedTo, assignedToId) {
+async function getKnownAgents() {
+  if (useMock || !pool) return KNOWN_AGENTS;
+  try {
+    const [rows] = await pool.query("SELECT id, name, email FROM users WHERE role = 'AGENT_IT'");
+    // IMPORTANT : ne jamais retomber sur la liste KNOWN_AGENTS codée en dur ici
+    // — ses IDs (u2/u3/u4) peuvent ne pas exister dans la vraie base, ce qui
+    // provoquait précisément la violation de clé étrangère sur `notifications`.
+    return rows;
+  } catch (e) {
+    console.warn('[Ticket Service] Lecture des agents échouée, aucune notification agent envoyée:', e.message);
+    return [];
+  }
+}
+
+function resolveAgent(assignedTo, assignedToId, agentsList) {
+  const list = agentsList || KNOWN_AGENTS;
   if (assignedTo && typeof assignedTo === 'object' && assignedTo.id) {
-    const known = KNOWN_AGENTS.find(a => a.id === assignedTo.id);
+    const known = list.find(a => a.id === assignedTo.id);
     return known || assignedTo;
   }
 
@@ -322,7 +381,7 @@ function resolveAgent(assignedTo, assignedToId) {
   if (!key || key === 'Non assigné' || key === '') return null;
 
   return (
-    KNOWN_AGENTS.find(a => a.id === key || a.name === key || a.email === key) || null
+    list.find(a => a.id === key || a.name === key || a.email === key) || null
   );
 }
 
@@ -392,15 +451,16 @@ app.post('/notifications/read-all', authenticateToken, async (req, res) => {
 
 // --- Tickets ---
 
-function canViewTicket(user, ticket) {
+function canViewTicket(user, ticket, localId) {
   if (!user || !ticket) return false;
   const role = mapLegacyRole(user.role);
+  const id = localId || user.id;
   if (role === 'SUPER_ADMIN' || role === 'admin') return true;
-  if (role === 'AGENT_IT' || role === 'agent') return ticket.assignedTo?.id === user.id;
+  if (role === 'AGENT_IT' || role === 'agent') return ticket.assignedTo?.id === id;
   if (role === 'CLIENT_ADMIN' && user.societeId) {
-    return ticket.societeId === user.societeId || ticket.createdBy?.id === user.id;
+    return ticket.societeId === user.societeId || ticket.createdBy?.id === id;
   }
-  return ticket.createdBy?.id === user.id;
+  return ticket.createdBy?.id === id;
 }
 
 async function evaluateSla({ authHeader, societeId, priority, createdAt, ticketId, category }) {
@@ -425,8 +485,9 @@ async function evaluateSla({ authHeader, societeId, priority, createdAt, ticketI
 app.get('/', authenticateToken, async (req, res) => {
   try {
     const role = mapLegacyRole(req.user.role);
+    const localId = await resolveLocalUserId(req.user);
     if (useMock) {
-      const filtered = mockTickets.filter(t => canViewTicket(req.user, t));
+      const filtered = mockTickets.filter(t => canViewTicket(req.user, t, localId));
       return res.json(filtered);
     }
 
@@ -434,13 +495,13 @@ app.get('/', authenticateToken, async (req, res) => {
     const params = [];
     if (role === 'AGENT_IT' || role === 'agent') {
       query += ' WHERE assigned_to_id = ?';
-      params.push(req.user.id);
+      params.push(localId);
     } else if (role === 'CLIENT_ADMIN' && req.user.societeId) {
       query += ' WHERE societe_id = ?';
       params.push(req.user.societeId);
     } else if (role !== 'SUPER_ADMIN' && role !== 'admin') {
       query += ' WHERE created_by_id = ?';
-      params.push(req.user.id);
+      params.push(localId);
     }
 
     const [rows] = await pool.query(query, params);
@@ -454,11 +515,12 @@ app.get('/', authenticateToken, async (req, res) => {
 app.get('/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
   try {
+    const localId = await resolveLocalUserId(req.user);
     if (useMock) {
       const ticket = mockTickets.find(t => t.id === id);
       if (!ticket) return res.status(404).json({ message: 'Ticket non trouvé' });
 
-      if (!canViewTicket(req.user, ticket)) {
+      if (!canViewTicket(req.user, ticket, localId)) {
         return res.status(403).json({ message: 'Non autorisé' });
       }
       return res.json(ticket);
@@ -467,7 +529,7 @@ app.get('/:id', authenticateToken, async (req, res) => {
     const ticket = await buildTicketFromDb(id);
     if (!ticket) return res.status(404).json({ message: 'Ticket non trouvé' });
 
-    if (!canViewTicket(req.user, ticket)) {
+    if (!canViewTicket(req.user, ticket, localId)) {
       return res.status(403).json({ message: 'Non autorisé' });
     }
 
@@ -486,6 +548,7 @@ app.post('/', authenticateToken, async (req, res) => {
   const id = `TRX-${Math.floor(1043 + Math.random() * 1000)}`;
   const now = new Date().toISOString();
   const creatorName = displayName(req.user);
+  const creatorId = await resolveLocalUserId(req.user);
   const fileList = attachments || files || [];
   const societeId = req.user.societeId || req.body.societeId || null;
 
@@ -503,7 +566,7 @@ app.post('/', authenticateToken, async (req, res) => {
     field: 'status',
     oldValue: '',
     newValue: 'open',
-    changedBy: { id: req.user.id, name: creatorName, email: req.user.email },
+    changedBy: { id: creatorId, name: creatorName, email: req.user.email },
     changedAt: now
   };
 
@@ -514,7 +577,7 @@ app.post('/', authenticateToken, async (req, res) => {
     status: 'open',
     priority: priority || 'medium',
     category: category || 'other',
-    createdBy: { id: req.user.id, name: creatorName, email: req.user.email },
+    createdBy: { id: creatorId, name: creatorName, email: req.user.email },
     createdAt: now,
     updatedAt: now,
     societeId,
@@ -549,7 +612,7 @@ app.post('/', authenticateToken, async (req, res) => {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             id, title, description, 'open', newTicket.priority, newTicket.category,
-            req.user.id, creatorName, req.user.email, now, now,
+            creatorId, creatorName, req.user.email, now, now,
             societeId, applicationId || null, sla?.contratId || null,
             sla?.slaDeadline || null, sla?.deferred ? 1 : 0, sla?.resumeAt || null
           ]
@@ -558,13 +621,13 @@ app.post('/', authenticateToken, async (req, res) => {
         // Fallback if multi-tenant columns not yet migrated
         await pool.query(
           'INSERT INTO tickets (id, title, description, status, priority, category, created_by_id, created_by_name, created_by_email, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [id, title, description, 'open', newTicket.priority, newTicket.category, req.user.id, creatorName, req.user.email, now, now]
+          [id, title, description, 'open', newTicket.priority, newTicket.category, creatorId, creatorName, req.user.email, now, now]
         );
       }
 
       await pool.query(
         'INSERT INTO history (id, ticket_id, field, old_value, new_value, changed_by_id, changed_by_name, changed_by_email, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [historyEntry.id, id, 'status', '', 'open', req.user.id, creatorName, req.user.email, now]
+        [historyEntry.id, id, 'status', '', 'open', creatorId, creatorName, req.user.email, now]
       );
 
       for (const a of newTicket.attachments) {
@@ -590,14 +653,21 @@ app.post('/', authenticateToken, async (req, res) => {
       }
     }
 
-    for (const agent of KNOWN_AGENTS) {
-      await createNotification({
-        userId: agent.id,
-        type: 'new_ticket',
-        message: `Nouveau ticket ${id} créé par ${creatorName} : ${title}`,
-        ticketId: id,
-        ticketTitle: title
-      });
+    const agents = await getKnownAgents();
+    for (const agent of agents) {
+      try {
+        await createNotification({
+          userId: agent.id,
+          type: 'new_ticket',
+          message: `Nouveau ticket ${id} créé par ${creatorName} : ${title}`,
+          ticketId: id,
+          ticketTitle: title
+        });
+      } catch (notifErr) {
+        // Une notification qui échoue (agent supprimé, etc.) ne doit jamais
+        // faire échouer la création du ticket lui-même.
+        console.warn('[Ticket Service] Notification agent échouée pour', agent.id, ':', notifErr.message);
+      }
     }
 
     if (!useMock) {
@@ -690,7 +760,8 @@ const assignTicketHandler = async (req, res) => {
 
   const now = new Date().toISOString();
   const changerName = displayName(req.user);
-  const agent = resolveAgent(assignedTo, assignedToId);
+  const agents = await getKnownAgents();
+  const agent = resolveAgent(assignedTo, assignedToId, agents);
 
   try {
     if (useMock) {
@@ -770,12 +841,13 @@ app.post('/:id/comments', authenticateToken, async (req, res) => {
 
   const now = new Date().toISOString();
   const authorName = displayName(req.user);
+  const authorId = await resolveLocalUserId(req.user);
   const commentId = `c_${Date.now()}`;
 
   const commentObj = {
     id: commentId,
     content,
-    author: { id: req.user.id, name: authorName, email: req.user.email },
+    author: { id: authorId, name: authorName, email: req.user.email },
     createdAt: now,
     isInternal: !!isInternal
   };
@@ -795,7 +867,7 @@ app.post('/:id/comments', authenticateToken, async (req, res) => {
 
       await pool.query(
         'INSERT INTO comments (id, ticket_id, content, author_id, author_name, author_email, created_at, is_internal) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        [commentId, id, content, req.user.id, authorName, req.user.email, now, isInternal ? 1 : 0]
+        [commentId, id, content, authorId, authorName, req.user.email, now, isInternal ? 1 : 0]
       );
       await pool.query('UPDATE tickets SET updated_at = ? WHERE id = ?', [now, id]);
 
@@ -914,8 +986,9 @@ app.post('/:id/evaluate', authenticateToken, async (req, res) => {
     const [rows] = await pool.query('SELECT * FROM tickets WHERE id = ?', [id]);
     if (rows.length === 0) return res.status(404).json({ message: 'Ticket non trouvé' });
     const row = rows[0];
+    const localId = await resolveLocalUserId(req.user);
 
-    if (row.created_by_id !== req.user.id) {
+    if (row.created_by_id !== localId) {
       return res.status(403).json({ message: 'Seul le créateur du ticket peut l\'évaluer' });
     }
 

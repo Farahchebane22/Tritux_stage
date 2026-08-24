@@ -16,6 +16,7 @@ import ReportsView from '../views/ReportsView.vue';
 import NoContractView from '../views/contract-gate/NoContractView.vue';
 import ContractRecapView from '../views/contract-gate/ContractRecapView.vue';
 import ContractSettingsView from '../views/contract-gate/ContractSettingsView.vue';
+import AdminClientsView from '../views/AdminClientsView.vue';
 
 const routes = [
   {
@@ -58,6 +59,12 @@ const routes = [
     path: '/tickets',
     name: 'tickets',
     component: TicketListView,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/clients',
+    name: 'admin-clients',
+    component: AdminClientsView,
     meta: { requiresAuth: true }
   },
   {

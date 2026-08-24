@@ -56,15 +56,18 @@
       </button>
 
       <button
-        v-if="currentUser.role === 'admin' || currentUser.role === 'SUPER_ADMIN'"
-        @click="navigate('tickets')"
+        v-if="isInternalStaffRole"
+        @click="navigate('clients')"
         class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-150 cursor-pointer"
-        style="color: var(--sidebar-fg)"
+        :style="{
+          background: isActive('clients') ? 'var(--sidebar-active)' : 'transparent',
+          color: isActive('clients') ? 'var(--sidebar-active-fg)' : 'var(--sidebar-fg)',
+        }"
         @mouseenter="onHover"
         @mouseleave="onLeave"
       >
         <SettingsIcon :size="16" :stroke-width="1.75" />
-        <span class="font-medium">Tous les tickets</span>
+        <span class="font-medium">Clients</span>
       </button>
     </nav>
 
@@ -148,6 +151,10 @@ const formatContractDate = (d?: string) =>
   d ? new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
 
 const currentUser = computed(() => authStore.user || { name: 'Guest', role: 'user' });
+const isInternalStaffRole = computed(() => {
+  const r = currentUser.value.role;
+  return r === 'admin' || r === 'SUPER_ADMIN' || r === 'agent' || r === 'AGENT_IT';
+});
 
 const initials = computed(() => {
   if (!currentUser.value.name) return '';
@@ -191,6 +198,7 @@ const roleColors: Record<string, string> = {
 const isActive = (id: string) => {
   if (id === 'dashboard') return route.path === '/';
   if (id === 'tickets') return route.path.startsWith('/tickets');
+  if (id === 'clients') return route.path === '/clients';
   if (id === 'security') return route.path === '/security';
   if (id === 'reports') return route.path === '/reports';
   if (id === 'notifications') return route.path === '/notifications';
@@ -201,6 +209,7 @@ const isActive = (id: string) => {
 const navigate = (id: string) => {
   if (id === 'dashboard') router.push('/');
   else if (id === 'tickets') router.push('/tickets');
+  else if (id === 'clients') router.push('/clients');
   else if (id === 'security') router.push('/security');
   else if (id === 'reports') router.push('/reports');
   else if (id === 'notifications') router.push('/notifications');
