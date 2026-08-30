@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import axios from 'axios';
-import type { Ticket, TicketStatus, TicketPriority, TicketCategory, Comment, Notification, User, CyberAnalysis } from '../types';
+import type { Ticket, TicketStatus, TicketPriority, TicketCategory, Comment, Notification, User, CyberAnalysis, EscalationTicket } from '../types';
 import { splitAgentsByCategory } from '../utils/agentCategories';
 import { decodeJwtPayload, keycloakRefreshToken, isKeycloakEnabled } from '../auth/keycloak';
 
@@ -140,6 +140,7 @@ export const apiService = {
     name: string;
     email: string;
     password: string;
+    phone?: string;
   }): Promise<{ user: User; token?: string; societe: any }> {
     const response = await api.post('/users/register-societe', payload);
     if (response.data.token) {
@@ -157,11 +158,12 @@ export const apiService = {
     return response.data.user || response.data;
   },
 
-  async updateProfile(payload: { name: string; email: string; department?: string }): Promise<{ user: User; token?: string }> {
+  async updateProfile(payload: { name: string; email: string; department?: string; phone?: string }): Promise<{ user: User; token?: string }> {
     const response = await api.put('/users/profile', payload);
-    if (response.data.token) {
-      localStorage.setItem('token', response.data.token);
-    }
+    // IMPORTANT : ne jamais stocker ce token "pont" (legacy) dans
+    // localStorage ici — en session Keycloak, il écraserait le vrai
+    // access_token RS256 actif (c'est ce qui causait le bug "rôle perdu
+    // après sync" observé précédemment). Le store décide, pas ce service.
     return {
       user: response.data.user || response.data,
       token: response.data.token,
@@ -175,6 +177,11 @@ export const apiService = {
   // Tickets
   async getTickets(): Promise<Ticket[]> {
     const response = await api.get('/tickets');
+    return response.data;
+  },
+
+  async getUrgentEscalation(): Promise<EscalationTicket[]> {
+    const response = await api.get('/tickets/urgent-escalation');
     return response.data;
   },
 
@@ -317,7 +324,10 @@ export const apiService = {
     keycloakId?: string;
   }): Promise<{ user: User; token?: string }> {
     const response = await api.post('/users/auth/keycloak-sync', payload);
-    if (response.data.token) localStorage.setItem('token', response.data.token);
+    // IMPORTANT : ne PAS stocker ce token "pont" (legacy HS256) ici — c'était
+    // la vraie cause du bug où le rôle/l'ID d'un utilisateur était perdu après
+    // synchronisation : ce token écrasait le vrai access_token Keycloak RS256
+    // déjà en place, cassant toutes les requêtes suivantes.
     return {
       user: response.data.user || response.data,
       token: response.data.token,

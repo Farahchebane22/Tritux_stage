@@ -48,6 +48,12 @@
               <strong class="text-slate-800">{{ row.total }}</strong> tickets
             </span>
             <span v-if="row.ouverts" class="text-amber-600 font-semibold">{{ row.ouverts }} ouverts</span>
+            <span
+              v-if="row.urgentUnassigned"
+              class="text-rose-600 font-semibold animate-pulse"
+            >
+              🔴 {{ row.urgentUnassigned }} urgent non assigné
+            </span>
           </div>
           <ChevronRightIcon :size="14" class="text-slate-300" />
         </div>
@@ -65,6 +71,7 @@ import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { apiService } from '../services/api';
 import { useTicketsStore } from '../stores/tickets';
+import { isUrgentUnassigned } from '../utils/urgentEscalation';
 import { ChevronRight as ChevronRightIcon } from 'lucide-vue-next';
 
 const router = useRouter();
@@ -101,6 +108,7 @@ onMounted(async () => {
 
         const societeTickets = ticketsStore.tickets.filter((t: any) => t.societeId === societe.id);
         const ouverts = societeTickets.filter((t: any) => t.status === 'open' || t.status === 'inprogress').length;
+        const urgentUnassigned = societeTickets.filter((t: any) => isUrgentUnassigned(t)).length;
 
         return {
           societe,
@@ -108,6 +116,7 @@ onMounted(async () => {
           contratActif: contrat ? contrat.statut === 'actif' && contrat.date_fin >= new Date().toISOString().slice(0, 10) : false,
           total: societeTickets.length,
           ouverts,
+          urgentUnassigned,
         };
       })
     );

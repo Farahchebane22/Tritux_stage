@@ -179,6 +179,16 @@ async function initDb() {
     pool = mysql.createPool(dbConfig);
     const conn = await pool.getConnection();
     console.log('[Ticket Service] MySQL Database connected successfully.');
+    try {
+      await conn.query('ALTER TABLE escalade_notifications ADD COLUMN palier INT NULL DEFAULT 1');
+    } catch {
+      /* colonne déjà existante */
+    }
+    try {
+      await conn.query('ALTER TABLE escalade_notifications ADD COLUMN detail TEXT NULL');
+    } catch {
+      /* colonne déjà existante */
+    }
     conn.release();
     useMock = false;
   } catch (error) {
@@ -482,6 +492,189 @@ async function evaluateSla({ authHeader, societeId, priority, createdAt, ticketI
   }
 }
 
+// --- Escalade des tickets urgents non assignés (voir docs/workflow-urgence-24-7.md) ---
+
+const ESCALATION_PALIER_2_MIN = 5;
+const ESCALATION_PALIER_3_MIN = 15;
+
+async function notifyUrgentPalier1({ authHeader, ticketId, category, canal }) {
+  try {
+    const resp = await fetch(`${CONTRACT_SERVICE_URL}/notify-urgent`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: authHeader || '',
+      },
+      body: JSON.stringify({ ticketId, category, canal: canal || 'email', palier: 1 }),
+    });
+    if (!resp.ok) {
+      console.warn('[Ticket Service] notify-urgent HTTP', resp.status);
+    }
+  } catch (e) {
+    console.warn('[Ticket Service] notify-urgent failed:', e.message);
+  }
+}
+
+async function getStaffByRole(roleName) {
+  if (useMock || !pool) return [];
+  const roles =
+    roleName === 'AGENT_IT' || roleName === 'agent'
+      ? ['AGENT_IT', 'agent']
+      : ['SUPER_ADMIN', 'admin'];
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, name, email, phone FROM users WHERE role IN (${roles.map(() => '?').join(',')})`,
+      roles
+    );
+    return rows;
+  } catch {
+    return [];
+  }
+}
+
+async function getMaxPalier(ticketId) {
+  if (useMock || !pool) return 0;
+  const [rows] = await pool.query(
+    'SELECT MAX(palier) AS maxP FROM escalade_notifications WHERE ticket_id = ?',
+    [ticketId]
+  );
+  return rows[0]?.maxP || 0;
+}
+
+async function notifyEscalation({ authHeader, ticketId, category, canal, palier, ticketTitle, societeId, targetRole }) {
+  try {
+    const resp = await fetch(`${CONTRACT_SERVICE_URL}/notify-urgent`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: authHeader || '',
+      },
+      body: JSON.stringify({ ticketId, category, canal: canal || 'email', palier, ticketTitle, societeId, targetRole }),
+    });
+    if (!resp.ok) {
+      console.warn(`[Ticket Service] notify-urgent (palier ${palier}) HTTP`, resp.status);
+    }
+  } catch (e) {
+    console.warn(`[Ticket Service] notify-urgent (palier ${palier}) failed:`, e.message);
+  }
+}
+
+/**
+ * Calcule le palier d'escalade de chaque ticket urgent non assigné et
+ * déclenche les notifications correspondant à tout palier nouvellement
+ * franchi depuis le dernier appel (pas de scheduler serveur : le calcul se
+ * fait à la volée, à chaque interrogation par un agent/admin connecté —
+ * voir docs/workflow-urgence-24-7.md §5.1).
+ */
+async function getUrgentEscalationTickets(authHeader) {
+  if (useMock || !pool) return [];
+
+  const [rows] = await pool.query(`
+    SELECT t.id, t.title, t.category, t.created_at, t.societe_id, t.contrat_id,
+           s.nom AS societe_nom, c.canal_notification_urgence
+    FROM tickets t
+    LEFT JOIN societes s ON s.id = t.societe_id
+    LEFT JOIN contrats_maintenance c ON c.id = t.contrat_id
+    JOIN sla_regles r ON r.contrat_id = t.contrat_id AND r.priorite = 'urgent'
+    WHERE t.priority = 'urgent'
+      AND t.assigned_to_id IS NULL
+      AND (t.sla_deferred = 0 OR t.sla_deferred IS NULL)
+      AND r.notification_immediate = 1
+    ORDER BY t.created_at ASC
+  `);
+
+  const now = Date.now();
+  const results = [];
+
+  for (const row of rows) {
+    const waitingMinutes = Math.max(0, Math.floor((now - new Date(row.created_at).getTime()) / 60000));
+    let palier = 1;
+    if (waitingMinutes >= ESCALATION_PALIER_3_MIN) palier = 3;
+    else if (waitingMinutes >= ESCALATION_PALIER_2_MIN) palier = 2;
+
+    const lastPalier = await getMaxPalier(row.id);
+    const canal = row.canal_notification_urgence || 'email';
+
+    if (palier >= 2 && lastPalier < 2) {
+      await notifyEscalation({
+        authHeader,
+        ticketId: row.id,
+        category: row.category,
+        canal,
+        palier: 2,
+        ticketTitle: row.title,
+        societeId: row.societe_id,
+        targetRole: 'AGENT_IT',
+      });
+      const agents = await getStaffByRole('AGENT_IT');
+      for (const agent of agents) {
+        await createNotification({
+          userId: agent.id,
+          type: 'urgent_escalation',
+          message: `⚠️ Ticket urgent ${row.id} toujours non assigné (${waitingMinutes} min) — intervention requise`,
+          ticketId: row.id,
+          ticketTitle: row.title,
+        });
+      }
+    }
+
+    if (palier >= 3 && lastPalier < 3) {
+      await notifyEscalation({
+        authHeader,
+        ticketId: row.id,
+        category: row.category,
+        canal,
+        palier: 3,
+        ticketTitle: row.title,
+        societeId: row.societe_id,
+        targetRole: 'SUPER_ADMIN',
+      });
+      const admins = await getStaffByRole('SUPER_ADMIN');
+      for (const admin of admins) {
+        await createNotification({
+          userId: admin.id,
+          type: 'urgent_escalation',
+          message: `🔴 CRITIQUE : ticket urgent ${row.id} non assigné depuis ${waitingMinutes} min — assignation immédiate requise`,
+          ticketId: row.id,
+          ticketTitle: row.title,
+        });
+      }
+    }
+
+    results.push({
+      id: row.id,
+      title: row.title,
+      category: row.category,
+      societeId: row.societe_id,
+      societeName: row.societe_nom,
+      createdAt: row.created_at,
+      waitingMinutes,
+      palier,
+    });
+  }
+
+  return results;
+}
+
+/**
+ * Liste des tickets urgents non assignés en cours d'escalade, avec leur
+ * palier actuel. Réservé au staff interne (AGENT_IT/SUPER_ADMIN). Appelé
+ * en polling par le frontend (toutes les 30s) pour alimenter le badge et
+ * la popup de palier 3.
+ */
+app.get('/urgent-escalation', authenticateToken, async (req, res) => {
+  try {
+    const role = mapLegacyRole(req.user.role);
+    if (role !== 'AGENT_IT' && role !== 'SUPER_ADMIN' && role !== 'agent' && role !== 'admin') {
+      return res.status(403).json({ message: 'Réservé au staff interne' });
+    }
+    const tickets = await getUrgentEscalationTickets(req.headers.authorization);
+    res.json(tickets);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
 app.get('/', authenticateToken, async (req, res) => {
   try {
     const role = mapLegacyRole(req.user.role);
@@ -670,6 +863,19 @@ app.post('/', authenticateToken, async (req, res) => {
       }
     }
 
+    if (
+      newTicket.priority === 'urgent' &&
+      sla?.escalate &&
+      !sla?.deferred
+    ) {
+      await notifyUrgentPalier1({
+        authHeader: req.headers.authorization,
+        ticketId: id,
+        category: newTicket.category,
+        canal: sla?.canal || sla?.rule?.canal,
+      });
+    }
+
     if (!useMock) {
       const full = await buildTicketFromDb(id);
       return res.status(201).json(full);
@@ -724,6 +930,7 @@ const updateStatusHandler = async (req, res) => {
     const [rows] = await pool.query('SELECT * FROM tickets WHERE id = ?', [id]);
     if (rows.length === 0) return res.status(404).json({ message: 'Ticket non trouvé' });
     const oldVal = rows[0].status;
+    const changerId = await resolveLocalUserId(req.user);
 
     await pool.query(
       'UPDATE tickets SET status = ?, updated_at = ? WHERE id = ?',
@@ -733,7 +940,7 @@ const updateStatusHandler = async (req, res) => {
     const historyId = `h_${Date.now()}`;
     await pool.query(
       'INSERT INTO history (id, ticket_id, field, old_value, new_value, changed_by_id, changed_by_name, changed_by_email, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [historyId, id, 'status', oldVal, status, req.user.id, changerName, req.user.email, now]
+      [historyId, id, 'status', oldVal, status, changerId, changerName, req.user.email, now]
     );
 
     await createNotification({
@@ -797,6 +1004,7 @@ const assignTicketHandler = async (req, res) => {
     const [rows] = await pool.query('SELECT * FROM tickets WHERE id = ?', [id]);
     if (rows.length === 0) return res.status(404).json({ message: 'Ticket non trouvé' });
     const oldVal = rows[0].assigned_to_name || 'Non assigné';
+    const changerId = await resolveLocalUserId(req.user);
 
     await pool.query(
       'UPDATE tickets SET assigned_to_id = ?, assigned_to_name = ?, assigned_to_email = ?, updated_at = ? WHERE id = ?',
@@ -806,7 +1014,7 @@ const assignTicketHandler = async (req, res) => {
     const historyId = `h_${Date.now()}`;
     await pool.query(
       'INSERT INTO history (id, ticket_id, field, old_value, new_value, changed_by_id, changed_by_name, changed_by_email, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [historyId, id, 'assignedTo', oldVal, agent?.name || 'Non assigné', req.user.id, changerName, req.user.email, now]
+      [historyId, id, 'assignedTo', oldVal, agent?.name || 'Non assigné', changerId, changerName, req.user.email, now]
     );
 
     if (agent?.id) {
@@ -835,7 +1043,7 @@ app.post('/:id/comments', authenticateToken, async (req, res) => {
 
   if (!content) return res.status(400).json({ message: 'Contenu requis' });
 
-  if (isInternal && req.user.role !== 'agent' && req.user.role !== 'admin') {
+  if (isInternal && req.user.role !== 'agent' && req.user.role !== 'admin' && req.user.role !== 'AGENT_IT' && req.user.role !== 'SUPER_ADMIN') {
     return res.status(403).json({ message: 'Seuls les agents et admins peuvent créer des commentaires internes' });
   }
 
@@ -882,7 +1090,9 @@ app.post('/:id/comments', authenticateToken, async (req, res) => {
     }
 
     if (!isInternal) {
-      const isAgentOrAdmin = req.user.role === 'agent' || req.user.role === 'admin';
+      const isAgentOrAdmin =
+        req.user.role === 'agent' || req.user.role === 'admin' ||
+        req.user.role === 'AGENT_IT' || req.user.role === 'SUPER_ADMIN';
       let notifyUserId = null;
 
       if (isAgentOrAdmin) {

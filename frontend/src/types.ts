@@ -2,7 +2,7 @@ export type TicketStatus = 'open' | 'inprogress' | 'resolved' | 'closed';
 export type TicketPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type TicketCategory = 'hardware' | 'software' | 'network' | 'account' | 'email' | 'security' | 'other';
 export type UserRole = 'user' | 'agent' | 'admin' | 'SUPER_ADMIN' | 'AGENT_IT' | 'CLIENT_ADMIN' | 'CLIENT_USER';
-export type NotificationType = 'new_ticket' | 'status_change' | 'new_comment' | 'assignment';
+export type NotificationType = 'new_ticket' | 'status_change' | 'new_comment' | 'assignment' | 'urgent_escalation';
 
 export type CyberRiskLevel = 'low' | 'medium' | 'high' | 'critical';
 
@@ -33,6 +33,7 @@ export interface User {
   specialties?: TicketCategory[];
   societeId?: string | null;
   keycloakId?: string | null;
+  phone?: string | null;
   joinDate: string;
   ticketsCreated?: number;
   ticketsResolved?: number;
@@ -96,6 +97,17 @@ export interface Ticket {
   slaDeadline?: string | null;
   slaDeferred?: boolean;
   slaResumeAt?: string | null;
+}
+
+export interface EscalationTicket {
+  id: string;
+  title: string;
+  category: TicketCategory;
+  societeId?: string | null;
+  societeName?: string | null;
+  createdAt: string;
+  waitingMinutes: number;
+  palier: number;
 }
 
 export interface Notification {

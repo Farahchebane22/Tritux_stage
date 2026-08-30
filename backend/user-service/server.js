@@ -105,6 +105,7 @@ function mapUserRow(row, stats = {}) {
     joinDate: row.joinDate,
     societeId: row.societe_id || row.societeId || null,
     keycloakId: row.keycloak_id || row.keycloakId || null,
+    phone: row.phone || null,
     ticketsCreated: stats.ticketsCreated ?? row.ticketsCreated ?? 0,
     ticketsResolved: stats.ticketsResolved ?? row.ticketsResolved ?? 0
   };
@@ -223,6 +224,7 @@ async function initDb() {
       "ALTER TABLE users ADD COLUMN societe_id VARCHAR(50) NULL",
       "ALTER TABLE users ADD COLUMN keycloak_id VARCHAR(100) NULL",
       "ALTER TABLE users ADD COLUMN specialties VARCHAR(255) NULL",
+      "ALTER TABLE users ADD COLUMN phone VARCHAR(30) NULL",
     ]) {
       try {
         await conn.query(col);
@@ -429,7 +431,7 @@ app.post('/register', async (req, res) => {
  * Body: { societeName, secteurActivite?, name, email, password }
  */
 app.post('/register-societe', async (req, res) => {
-  const { societeName, secteurActivite, name, email, password } = req.body;
+  const { societeName, secteurActivite, name, email, password, phone } = req.body;
   if (!societeName || !name || !email || !password) {
     return res.status(400).json({ message: 'Nom de société, nom, email et mot de passe requis' });
   }
@@ -474,6 +476,7 @@ app.post('/register-societe', async (req, res) => {
         societe_id: societeId,
         societeId,
         keycloak_id: keycloakId,
+        phone: phone || null,
         ticketsCreated: 0,
         ticketsResolved: 0,
       };
@@ -488,13 +491,13 @@ app.post('/register-societe', async (req, res) => {
     await pool.query(
       `INSERT INTO societes (id, nom, secteur_activite, contact_principal_nom, contact_principal_email, contact_principal_telephone, date_creation)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [societeId, societeName, secteurActivite || null, name, email, null, joinDate]
+      [societeId, societeName, secteurActivite || null, name, email, phone || null, joinDate]
     );
 
     await pool.query(
-      `INSERT INTO users (id, name, email, role, department, joinDate, societe_id, keycloak_id)
-       VALUES (?, ?, ?, 'CLIENT_ADMIN', 'Direction', ?, ?, ?)`,
-      [userId, name, email, joinDate, societeId, keycloakId]
+      `INSERT INTO users (id, name, email, role, department, joinDate, societe_id, keycloak_id, phone)
+       VALUES (?, ?, ?, 'CLIENT_ADMIN', 'Direction', ?, ?, ?, ?)`,
+      [userId, name, email, joinDate, societeId, keycloakId, phone || null]
     );
 
     const row = await findUserById(userId);
@@ -525,7 +528,7 @@ async function getProfile(req, res) {
 
 // Persist profile changes (fixes logout data loss). Department is read-only (admin/RH only).
 app.put('/profile', authenticateToken, async (req, res) => {
-  const { name, email } = req.body;
+  const { name, email, phone } = req.body;
 
   if (!name || !String(name).trim()) {
     return res.status(400).json({ message: 'Le nom est requis' });
@@ -536,6 +539,7 @@ app.put('/profile', authenticateToken, async (req, res) => {
 
   const cleanName = String(name).trim();
   const cleanEmail = String(email).trim().toLowerCase();
+  const cleanPhone = phone != null ? String(phone).trim().slice(0, 30) : null;
 
   try {
     const current = await resolveLocalUser(req.user);
@@ -553,14 +557,15 @@ app.put('/profile', authenticateToken, async (req, res) => {
     if (useMock) {
       current.name = cleanName;
       current.email = cleanEmail;
+      current.phone = cleanPhone;
       // department intentionally unchanged
       const user = await enrichUser(current);
       return res.json({ user, token: signToken(user) });
     }
 
     await pool.query(
-      'UPDATE users SET name = ?, email = ? WHERE id = ?',
-      [cleanName, cleanEmail, current.id]
+      'UPDATE users SET name = ?, email = ?, phone = ? WHERE id = ?',
+      [cleanName, cleanEmail, cleanPhone, current.id]
     );
 
     const updated = await findUserById(current.id);
@@ -626,7 +631,7 @@ app.get('/agents', authenticateToken, async (req, res) => {
       let rows;
       try {
         [rows] = await pool.query(
-          'SELECT id, name, email, role, department, joinDate, specialties FROM users'
+          'SELECT id, name, email, role, department, joinDate, specialties, phone FROM users'
         );
       } catch {
         [rows] = await pool.query(
@@ -657,6 +662,64 @@ app.get('/agents', authenticateToken, async (req, res) => {
     res.json(agents);
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+/**
+ * Provisionne dans Keycloak un utilisateur qui existe déjà en base locale
+ * mais pas encore dans l'annuaire Keycloak (ex: comptes du seed init.sql
+ * créés avant la mise en place de Keycloak). Réservé aux super-admins.
+ * Body: { email, password }
+ */
+app.post('/admin/provision-keycloak', authenticateToken, async (req, res) => {
+  const role = mapLegacyRole(req.user.role);
+  if (role !== 'SUPER_ADMIN' && role !== 'admin') {
+    return res.status(403).json({ message: 'Réservé aux super-administrateurs' });
+  }
+
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ message: 'email et password requis' });
+  }
+
+  const REALM_ROLE_BY_LOCAL = {
+    SUPER_ADMIN: 'super-admin',
+    AGENT_IT: 'agent-it',
+    CLIENT_ADMIN: 'client-admin',
+    CLIENT_USER: 'client-user',
+  };
+
+  try {
+    const localRow = await findUserByEmail(email);
+    if (!localRow) {
+      return res.status(404).json({ message: `Aucun utilisateur local avec l'email ${email}` });
+    }
+
+    const localRole = mapLegacyRole(localRow.role);
+    const realmRole = REALM_ROLE_BY_LOCAL[localRole];
+    if (!realmRole) {
+      return res.status(400).json({ message: `Rôle local non supporté pour le provisioning Keycloak: ${localRow.role}` });
+    }
+
+    const [firstName, ...rest] = String(localRow.name || email).trim().split(' ');
+    const lastName = rest.join(' ') || firstName;
+
+    const keycloakId = await createKeycloakUser({
+      email,
+      firstName: firstName || localRow.name,
+      lastName,
+      password,
+      realmRole,
+      societeId: localRow.societe_id || null,
+    });
+
+    if (!useMock && pool) {
+      await pool.query('UPDATE users SET keycloak_id = ? WHERE id = ?', [keycloakId, localRow.id]);
+    }
+
+    res.json({ message: 'Utilisateur provisionné dans Keycloak', keycloakId, email, realmRole });
+  } catch (err) {
+    res.status(500).json({ message: 'Provisioning Keycloak échoué', error: err.message });
   }
 });
 

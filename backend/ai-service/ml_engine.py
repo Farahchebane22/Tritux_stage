@@ -98,16 +98,40 @@ class AIEngine:
             category, priority, confidence = self._rules_fallback(text)
             model_name = "rules_fallback"
 
+        # Garde-fou métier : le modèle de priorité (TF-IDF/NB, entraîné sur un
+        # jeu de données limité) peut sous-évaluer un incident majeur si le
+        # vocabulaire exact n'était pas dans les exemples d'entraînement.
+        # On élève la priorité quand des signaux forts de gravité sont présents,
+        # quel que soit le verdict du modèle.
+        priority, boosted = self._severity_boost(text, priority)
+
         kb_hit = self._best_kb_match(text)
         suggested = RESPONSE_TEMPLATES.get(category, RESPONSE_TEMPLATES["other"])
         hint = self.hints.get(category)
         if hint:
             suggested = f"{suggested} Piste recommandée: {hint}"
-        if kb_hit and kb_hit.get("answer"):
-            suggested = f"{kb_hit['answer']}"
 
-        if kb_hit and kb_hit.get("category") == category:
-            confidence = min(97, confidence + 6)
+        can_self_resolve = False
+        self_help_steps: list[str] = []
+        matched_intent = None
+
+        if boosted:
+            # Incident de grande ampleur détecté : pas d'auto-assistance générique
+            # proposée, on oriente directement vers une intervention agent.
+            suggested = (
+                "Incident de grande ampleur détecté (impact multi-utilisateurs, "
+                "arrêt de service ou aucune solution de contournement mentionnée). "
+                "Ce type de panne nécessite une intervention immédiate d'un agent IT — "
+                "pas d'auto-assistance recommandée ici."
+            )
+            confidence = max(confidence, 85)
+        elif kb_hit and kb_hit.get("answer"):
+            suggested = kb_hit["answer"]
+            can_self_resolve = bool(kb_hit.get("self_fixable"))
+            self_help_steps = kb_hit.get("steps", [])[:5]
+            matched_intent = kb_hit.get("intent")
+            if kb_hit.get("category") == category:
+                confidence = min(97, confidence + 6)
 
         return {
             "category": category,
@@ -115,9 +139,9 @@ class AIEngine:
             "confidence": confidence,
             "suggestedResponse": suggested.strip(),
             "model": model_name,
-            "canSelfResolve": bool(kb_hit and kb_hit.get("self_fixable")),
-            "selfHelpSteps": (kb_hit or {}).get("steps", [])[:5],
-            "matchedIntent": (kb_hit or {}).get("intent"),
+            "canSelfResolve": can_self_resolve,
+            "selfHelpSteps": self_help_steps,
+            "matchedIntent": matched_intent,
         }
 
     async def chat_async(self, message: str, history: list[dict] | None = None) -> dict[str, Any]:
@@ -252,6 +276,30 @@ class AIEngine:
                 best_score = score
                 best = {**item, "score": score}
         return best if best_score > 0 else None
+
+    SEVERITY_BOOST_PATTERNS = [
+        "panne totale", "panne critique", "totalement inaccessible",
+        "completement inaccessible", "complètement inaccessible",
+        "arret complet", "arrêt complet", "aucune solution de contournement",
+        "aucun contournement", "sans solution de contournement",
+        "tous les postes", "tout le site", "toute l'entreprise", "tout le monde",
+        "personne ne peut", "plus aucun acces", "plus aucun accès",
+        "hors service", "production arretee", "production arrêtée",
+        "impact critique", "bloque toute", "bloque tout le", "inaccessible depuis",
+        "indisponible depuis", "panne generale", "panne générale",
+    ]
+
+    def _severity_boost(self, text: str, priority: str) -> tuple[str, bool]:
+        """Détecte des signaux textuels forts de gravité (incident étendu,
+        aucun contournement possible, service totalement à l'arrêt) et force
+        la priorité à 'urgent' si le modèle ML ne l'a pas déjà fait. Sert de
+        filet de sécurité métier au-dessus du modèle statistique."""
+        if priority == "urgent":
+            return priority, False
+        hits = sum(1 for kw in self.SEVERITY_BOOST_PATTERNS if kw in text)
+        if hits >= 1:
+            return "urgent", True
+        return priority, False
 
     def _rules_fallback(self, text: str) -> tuple[str, str, int]:
         rules = [

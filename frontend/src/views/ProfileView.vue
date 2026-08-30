@@ -134,6 +134,21 @@
               </div>
             </div>
 
+            <div class="sm:col-span-2">
+              <label class="block text-xs font-semibold text-slate-600 mb-1.5">Téléphone</label>
+              <div class="relative">
+                <PhoneIcon :size="14" class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  v-model="form.phone"
+                  type="tel"
+                  placeholder="+216 XX XXX XXX"
+                  :disabled="!editing"
+                  class="w-full pl-10 pr-3.5 py-2.5 rounded-xl text-sm border border-slate-200 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
+                />
+              </div>
+              <p class="text-[11px] text-slate-400 mt-1.5">Utilisé pour les alertes urgentes (SMS/appel) selon le contrat de votre société.</p>
+            </div>
+
             <div>
               <label class="block text-xs font-semibold text-slate-600 mb-1.5">Département</label>
               <div class="relative">
@@ -236,6 +251,7 @@ import { useAuthStore } from '../stores/auth';
 import {
   User as UserIcon,
   Mail as MailIcon,
+  Phone as PhoneIcon,
   Building2 as Building2Icon,
   Calendar as CalendarIcon,
   Shield as ShieldIcon,
@@ -261,7 +277,8 @@ const passwordError = ref(false);
 const form = reactive({
   name: '',
   email: '',
-  department: ''
+  department: '',
+  phone: ''
 });
 
 const passwordForm = reactive({
@@ -308,6 +325,7 @@ const syncForm = () => {
   form.name = currentUser.value?.name || '';
   form.email = currentUser.value?.email || '';
   form.department = currentUser.value?.department || '';
+  form.phone = currentUser.value?.phone || '';
 };
 
 onMounted(async () => {
@@ -345,7 +363,8 @@ const toggleEdit = async () => {
     await authStore.updateProfile(
       form.name.trim(),
       form.email.trim(),
-      currentUser.value?.department || ''
+      currentUser.value?.department || '',
+      form.phone.trim()
     );
     profileError.value = false;
     profileMessage.value = 'Profil enregistré. Les changements resteront après déconnexion.';

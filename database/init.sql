@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS users (
     specialties VARCHAR(255) NULL COMMENT 'Catégories IT (csv)',
     societe_id VARCHAR(50) NULL,
     keycloak_id VARCHAR(100) NULL,
+    phone VARCHAR(30) NULL,
     FOREIGN KEY (societe_id) REFERENCES societes(id) ON DELETE SET NULL
 );
 
@@ -178,6 +179,7 @@ CREATE TABLE IF NOT EXISTS escalade_notifications (
     date_envoi VARCHAR(50) NOT NULL,
     statut_envoi VARCHAR(20) NOT NULL DEFAULT 'envoye',
     detail TEXT,
+    palier INT NULL DEFAULT 1,
     FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
 );
 

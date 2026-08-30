@@ -2,6 +2,7 @@
  * contract-service — Sociétés, contrats, gate d'accès, moteur SLA.
  * Port 5003
  */
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import mysql from 'mysql2/promise';
@@ -13,6 +14,7 @@ import {
   isClientRole,
   mapLegacyRole,
 } from '../shared/auth.js';
+import { placeUrgentCall, sendUrgentSms, twilioConfigured } from './notificationProvider.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -74,14 +76,60 @@ const mockEscalades = [];
 async function initDb() {
   try {
     pool = mysql.createPool(dbConfig);
-    const c = await pool.getConnection();
-    c.release();
+    const conn = await pool.getConnection();
+    for (const col of [
+      'ALTER TABLE escalade_notifications ADD COLUMN palier INT NULL DEFAULT 1',
+      'ALTER TABLE escalade_notifications ADD COLUMN detail TEXT NULL',
+    ]) {
+      try {
+        await conn.query(col);
+      } catch {
+        /* colonne déjà existante */
+      }
+    }
+    conn.release();
     useMock = false;
     console.log('[Contract Service] MySQL connected');
   } catch (e) {
     useMock = true;
     console.warn('[Contract Service] MySQL unavailable, mock mode:', e.message);
   }
+}
+
+function parseSpecialties(row) {
+  if (!row.specialties) return [];
+  if (Array.isArray(row.specialties)) return row.specialties;
+  return String(row.specialties)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function agentMatchesCategory(agent, category) {
+  if (!category) return true;
+  const specs = agent.specialties || [];
+  if (!specs.length) return false;
+  return specs.includes(category) || specs.includes('other');
+}
+
+async function getItAgents() {
+  if (useMock || !pool) {
+    return [
+      { id: 'u2', name: 'Leila Mansour', email: 'leila.mansour@tritux.com', phone: null, specialties: ['network', 'security', 'account'] },
+      { id: 'u3', name: 'Karim Oueslati', email: 'karim.oueslati@tritux.com', phone: null, specialties: ['software', 'email', 'hardware'] },
+    ];
+  }
+  let rows;
+  try {
+    [rows] = await pool.query(
+      "SELECT id, name, email, phone, specialties FROM users WHERE role IN ('AGENT_IT', 'agent')"
+    );
+  } catch {
+    [rows] = await pool.query(
+      "SELECT id, name, email, specialties FROM users WHERE role IN ('AGENT_IT', 'agent')"
+    );
+  }
+  return rows.map((r) => ({ ...r, specialties: parseSpecialties(r) }));
 }
 
 function isContractActive(contrat, now = new Date()) {
@@ -306,16 +354,6 @@ app.post('/sla/evaluate', authenticateToken, async (req, res) => {
       !!rule?.notification_immediate &&
       (priority === 'urgent' || priority === 'high');
 
-    let escalade = null;
-    if (escalate && ticketId) {
-      escalade = await sendUrgentAlert({
-        ticketId,
-        canal: rule.canal || contrat.canal_notification_urgence || 'email',
-        category,
-        agentHint: null,
-      });
-    }
-
     res.json({
       contratId: contrat.id,
       slaDeadline,
@@ -323,6 +361,7 @@ app.post('/sla/evaluate', authenticateToken, async (req, res) => {
       resumeAt: coverage.resumeAt,
       covered: coverage.covered,
       escalate,
+      canal: rule?.canal || contrat.canal_notification_urgence || 'email',
       rule: rule
         ? {
             priorite: rule.priorite,
@@ -330,7 +369,6 @@ app.post('/sla/evaluate', authenticateToken, async (req, res) => {
             canal: rule.canal,
           }
         : null,
-      escalade,
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -338,36 +376,129 @@ app.post('/sla/evaluate', authenticateToken, async (req, res) => {
 });
 
 /**
- * NotificationService mock — replace body with Twilio later.
+ * NotificationService — appelle un vrai fournisseur (Twilio) pour SMS et
+ * appels téléphoniques quand configuré (voir notificationProvider.js), sinon
+ * retombe en mock console. Journalise toujours dans escalade_notifications.
  * Interface: sendUrgentAlert({ ticketId, agentId, canal })
  */
-export async function sendUrgentAlert({ ticketId, agentId, canal, category }) {
-  const id = `esc_${Date.now()}`;
+export async function sendUrgentAlert({ ticketId, agentId, agent, canal, category, palier = 1, ticketTitle, societeName }) {
+  const id = `esc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
   const now = new Date().toISOString();
-  const detail = `[MOCK ${canal}] Alerte urgente ticket ${ticketId} (catégorie=${category || 'n/a'})`;
+  const recipient = agent?.name || agentId || 'destinataire inconnu';
+  const viaPhone = (canal === 'sms' || canal === 'telephone') && agent?.phone;
+
+  // Pour une alerte urgente, on déclenche l'APPEL ET le SMS ensemble dès que
+  // le contrat prévoit un canal téléphonique (sms OU telephone) — un seul
+  // canal peut être manqué (SMS non lu, appel non décroché).
+  let callResult = { ok: true, mock: true };
+  let smsResult = { ok: true, mock: true };
+  if (viaPhone) {
+    callResult = await placeUrgentCall({ toPhone: agent.phone, ticketId, ticketTitle: ticketTitle || '', societeName });
+    smsResult = await sendUrgentSms({ toPhone: agent.phone, ticketId, ticketTitle: ticketTitle || '', societeName });
+  }
+  const sendResult = {
+    ok: callResult.ok && smsResult.ok,
+    reason: [!callResult.ok ? `appel: ${callResult.reason}` : null, !smsResult.ok ? `sms: ${smsResult.reason}` : null]
+      .filter(Boolean)
+      .join(' | '),
+  };
+
+  const providerLabel = twilioConfigured && viaPhone ? 'TWILIO' : 'MOCK';
+  const statut = sendResult.ok ? 'envoye' : 'echec';
+  const detail = `[${providerLabel} ${canal}] Palier ${palier} — ticket ${ticketId} → ${recipient}${viaPhone ? ` (${agent.phone}, appel+sms)` : ''} (catégorie=${category || 'n/a'})${sendResult.ok ? '' : ` — ÉCHEC: ${sendResult.reason}`}`;
   console.log(`[NotificationService] ${detail}`);
 
   const row = {
     id,
     ticket_id: ticketId,
-    agent_id: agentId || null,
+    agent_id: agentId || agent?.id || null,
     canal: canal || 'email',
     date_envoi: now,
-    statut_envoi: 'envoye',
+    statut_envoi: statut,
     detail,
+    palier,
   };
 
   if (useMock) {
     mockEscalades.push(row);
   } else if (pool) {
-    await pool.query(
-      `INSERT INTO escalade_notifications (id, ticket_id, agent_id, canal, date_envoi, statut_envoi, detail)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [row.id, row.ticket_id, row.agent_id, row.canal, row.date_envoi, row.statut_envoi, row.detail]
-    );
+    try {
+      await pool.query(
+        `INSERT INTO escalade_notifications (id, ticket_id, agent_id, canal, date_envoi, statut_envoi, detail, palier)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [row.id, row.ticket_id, row.agent_id, row.canal, row.date_envoi, row.statut_envoi, row.detail, row.palier]
+      );
+    } catch {
+      await pool.query(
+        `INSERT INTO escalade_notifications (id, ticket_id, agent_id, canal, date_envoi, statut_envoi, detail)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [row.id, row.ticket_id, row.agent_id, row.canal, row.date_envoi, row.statut_envoi, row.detail]
+      );
+    }
   }
   return row;
 }
+
+/**
+ * Palier 1 — alerte immédiate aux agents IT spécialisés dans la catégorie du ticket.
+ * Journalise chaque envoi dans escalade_notifications.
+ */
+async function getStaffForEscalation(role, category) {
+  if (role === 'SUPER_ADMIN') {
+    if (useMock || !pool) return [];
+    try {
+      const [rows] = await pool.query(
+        "SELECT id, name, email, phone FROM users WHERE role IN ('SUPER_ADMIN', 'admin')"
+      );
+      return rows;
+    } catch {
+      return [];
+    }
+  }
+  const agents = await getItAgents();
+  const matched = agents.filter((a) => agentMatchesCategory(a, category));
+  return matched.length ? matched : agents;
+}
+
+app.post('/notify-urgent', authenticateToken, async (req, res) => {
+  try {
+    const {
+      ticketId,
+      category,
+      canal = 'email',
+      palier = 1,
+      ticketTitle,
+      societeId,
+      targetRole = 'AGENT_IT',
+    } = req.body;
+    if (!ticketId) {
+      return res.status(400).json({ message: 'ticketId requis' });
+    }
+
+    const societe = societeId ? await getSociete(societeId) : null;
+    const recipients = await getStaffForEscalation(targetRole, category);
+
+    const results = [];
+    for (const agent of recipients) {
+      results.push(
+        await sendUrgentAlert({
+          ticketId,
+          agentId: agent.id,
+          agent,
+          canal,
+          category,
+          palier,
+          ticketTitle,
+          societeName: societe?.nom,
+        })
+      );
+    }
+
+    res.json({ notified: results.length, palier, results });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
 
 app.post('/notifications/urgent', authenticateToken, async (req, res) => {
   try {

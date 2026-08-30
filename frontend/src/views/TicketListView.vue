@@ -110,7 +110,15 @@
                 <span class="font-mono text-xs text-slate-500">{{ ticket.id }}</span>
               </td>
               <td class="px-4 py-3.5">
-                <span class="text-sm font-medium text-slate-800 line-clamp-1">{{ ticket.title }}</span>
+                <div class="flex flex-col gap-1">
+                  <span class="text-sm font-medium text-slate-800 line-clamp-1">{{ ticket.title }}</span>
+                  <span
+                    v-if="isUrgentUnassigned(ticket)"
+                    class="inline-flex w-fit items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-100 text-rose-700 animate-pulse"
+                  >
+                    🔴 {{ urgentLabel(ticket) }}
+                  </span>
+                </div>
               </td>
               <td class="px-4 py-3.5">
                 <Badge :category="ticket.category" />
@@ -171,6 +179,7 @@ import { useRouter, useRoute } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useTicketsStore } from '../stores/tickets';
 import { apiService } from '../services/api';
+import { isUrgentUnassigned, urgentEscalationLabel } from '../utils/urgentEscalation';
 import Badge from '../components/ui/Badge.vue';
 import {
   Search as SearchIcon,
@@ -186,8 +195,11 @@ const ticketsStore = useTicketsStore();
 
 const search = ref('');
 const filterStatus = ref<TicketStatus | 'all'>('all');
-const filterPriority = ref<TicketPriority | 'all'>('all');
+const filterPriority = ref<TicketPriority | 'all'>(
+  route.query.priority === 'urgent' ? 'urgent' : 'all'
+);
 const filterCategory = ref<TicketCategory | 'all'>('all');
+const filterUnassigned = ref(route.query.unassigned === '1');
 const societeFilter = ref<string | null>((route.query.societeId as string) || null);
 const societeNames = ref<Record<string, string>>({});
 
@@ -276,10 +288,13 @@ const filteredTickets = computed(() => {
     const priorityMatch = filterPriority.value === 'all' || t.priority === filterPriority.value;
     const catMatch = filterCategory.value === 'all' || t.category === filterCategory.value;
     const societeMatch = !societeFilter.value || (t as any).societeId === societeFilter.value;
+    const unassignedMatch = !filterUnassigned.value || !t.assignedTo;
 
-    return userMatch && searchMatch && statusMatch && priorityMatch && catMatch && societeMatch;
+    return userMatch && searchMatch && statusMatch && priorityMatch && catMatch && societeMatch && unassignedMatch;
   });
 });
+
+const urgentLabel = (ticket: Parameters<typeof urgentEscalationLabel>[0]) => urgentEscalationLabel(ticket);
 
 const viewTicket = (id: string) => {
   router.push(`/tickets/${id}`);

@@ -127,6 +127,18 @@
               />
             </div>
 
+            <div v-if="mode === 'register'">
+              <label class="block text-xs font-medium text-slate-700 mb-1.5">Téléphone</label>
+              <input
+                type="tel"
+                v-model="phone"
+                placeholder="+216 XX XXX XXX"
+                class="w-full px-3.5 py-2.5 rounded-lg text-sm border text-slate-900 placeholder-slate-400 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+                style="borderColor: var(--border)"
+              />
+              <p class="text-[11px] text-slate-400 mt-1">Utilisé pour les alertes urgentes de votre contrat (SMS/appel).</p>
+            </div>
+
             <div>
               <label class="block text-xs font-medium text-slate-700 mb-1.5">Adresse email</label>
               <input
@@ -211,6 +223,7 @@ const showPw = ref(false);
 const email = ref('');
 const password = ref('');
 const name = ref('');
+const phone = ref('');
 const societeName = ref('');
 const secteurActivite = ref('');
 const errorMsg = ref('');
@@ -231,6 +244,7 @@ const handleSubmit = async () => {
         name: name.value,
         email: email.value,
         password: password.value,
+        phone: phone.value || undefined,
       });
       // Le compte vient d'être créé dans Keycloak : on se connecte immédiatement
       // avec les mêmes identifiants pour ouvrir une vraie session Keycloak.

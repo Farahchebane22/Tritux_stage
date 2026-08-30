@@ -46,13 +46,21 @@
         <span class="font-medium">{{ item.label }}</span>
         
         <span
-          v-if="item.id === 'notifications' && notificationsStore.unreadCount > 0"
+          v-if="item.id === 'tickets' && isInternalStaffRole && escalationStore.count > 0"
+          class="ml-auto w-5 h-5 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center animate-pulse"
+          :title="`${escalationStore.count} ticket(s) en escalade`"
+        >
+          {{ escalationStore.count > 9 ? '9+' : escalationStore.count }}
+        </span>
+
+        <span
+          v-else-if="item.id === 'notifications' && notificationsStore.unreadCount > 0"
           class="ml-auto w-5 h-5 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center"
         >
           {{ notificationsStore.unreadCount }}
         </span>
         
-        <ChevronRightIcon v-if="isActive(item.id)" :size="13" class="ml-auto opacity-60" />
+        <ChevronRightIcon v-if="isActive(item.id)" :size="13" class="ml-auto opacity-60 shrink-0" />
       </button>
 
       <button
@@ -127,6 +135,7 @@ import { useRouter, useRoute } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useNotificationsStore } from '../stores/notifications';
 import { useContractStore } from '../stores/contract';
+import { useEscalationStore } from '../stores/escalation';
 import {
   LayoutDashboard as LayoutDashboardIcon,
   Ticket as TicketIcon,
@@ -146,6 +155,7 @@ const route = useRoute();
 const authStore = useAuthStore();
 const notificationsStore = useNotificationsStore();
 const contractStore = useContractStore();
+const escalationStore = useEscalationStore();
 
 const formatContractDate = (d?: string) =>
   d ? new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';

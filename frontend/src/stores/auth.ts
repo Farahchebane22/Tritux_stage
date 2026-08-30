@@ -26,10 +26,10 @@ export const useAuthStore = defineStore('auth', () => {
     isKeycloakEnabled() ? 'keycloak' : 'legacy'
   );
 
-  const persistSession = (loggedUser: User, token?: string) => {
+  const persistSession = (loggedUser: User, token?: string, mode?: 'legacy' | 'keycloak') => {
     user.value = loggedUser;
     isLoggedIn.value = true;
-    authMode.value = 'legacy';
+    if (mode) authMode.value = mode;
     localStorage.setItem('user', JSON.stringify(loggedUser));
     if (token) {
       localStorage.setItem('token', token);
@@ -37,7 +37,7 @@ export const useAuthStore = defineStore('auth', () => {
   };
 
   const setLocalSession = (loggedUser: User, token?: string) => {
-    persistSession(loggedUser, token);
+    persistSession(loggedUser, token, 'legacy');
   };
 
   const bootstrapKeycloak = async () => {
@@ -59,7 +59,9 @@ export const useAuthStore = defineStore('auth', () => {
         societeId,
         keycloakId: kc.subject,
       });
-      persistSession(synced.user, synced.token || kc.token);
+      // Toujours garder le vrai token Keycloak (kc.token, RS256) — jamais le
+      // token "pont" legacy renvoyé par la synchronisation.
+      persistSession(synced.user, kc.token);
     } catch {
       persistSession(
         {
@@ -161,8 +163,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
     try {
       const { user: loggedUser, token } = await apiService.login(email, role, password);
-      authMode.value = 'legacy';
-      persistSession(loggedUser, token);
+      persistSession(loggedUser, token, 'legacy');
     } catch (error) {
       console.warn('API connection failed, falling back to mock login.', error);
       let matchedUser = mockUsers.find(u => u.email.toLowerCase() === email.toLowerCase());
@@ -175,8 +176,7 @@ export const useAuthStore = defineStore('auth', () => {
         matchedUser.email.toLowerCase() === email.toLowerCase()
           ? { ...matchedUser }
           : { ...matchedUser, role };
-      authMode.value = 'legacy';
-      persistSession(finalUser);
+      persistSession(finalUser, undefined, 'legacy');
     }
   };
 
@@ -205,9 +205,12 @@ export const useAuthStore = defineStore('auth', () => {
     }
   };
 
-  const updateProfile = async (name: string, email: string, department: string) => {
-    const { user: updated, token } = await apiService.updateProfile({ name, email, department });
-    persistSession(updated, token);
+  const updateProfile = async (name: string, email: string, department: string, phone?: string) => {
+    const { user: updated } = await apiService.updateProfile({ name, email, department, phone });
+    // Ne jamais réutiliser le token "pont" (legacy) renvoyé ici : en session
+    // Keycloak, ça écraserait le vrai access_token RS256 actif et casserait
+    // le rafraîchissement automatique en cours.
+    persistSession(updated);
     return updated;
   };
 

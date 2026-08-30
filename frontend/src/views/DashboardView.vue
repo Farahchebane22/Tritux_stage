@@ -191,15 +191,23 @@
         </button>
       </div>
     </div>
+
+    <EscalationAlertModal
+      :open="showPalier3Modal"
+      :tickets="escalationStore.palier3Tickets"
+      @acknowledged="showPalier3Modal = false"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useTicketsStore } from '../stores/tickets';
+import { useEscalationStore } from '../stores/escalation';
 import Badge from '../components/ui/Badge.vue';
+import EscalationAlertModal from '../components/EscalationAlertModal.vue';
 import {
   Ticket as TicketIcon,
   Clock as ClockIcon,
@@ -213,12 +221,34 @@ import {
 const router = useRouter();
 const authStore = useAuthStore();
 const ticketsStore = useTicketsStore();
+const escalationStore = useEscalationStore();
+const showPalier3Modal = ref(false);
+
+const isSuperAdmin = computed(() => {
+  const r = authStore.user?.role;
+  return r === 'admin' || r === 'SUPER_ADMIN';
+});
 
 onMounted(async () => {
   await ticketsStore.fetchTickets();
+  if (isSuperAdmin.value && escalationStore.hasPalier3) {
+    showPalier3Modal.value = true;
+  }
 });
 
-const isAgent = computed(() => authStore.user?.role === 'agent' || authStore.user?.role === 'admin');
+watch(
+  () => escalationStore.palier3Tickets.length,
+  (n) => {
+    if (isSuperAdmin.value && n > 0) {
+      showPalier3Modal.value = true;
+    }
+  }
+);
+
+const isAgent = computed(() => {
+  const r = authStore.user?.role;
+  return r === 'agent' || r === 'admin' || r === 'AGENT_IT' || r === 'SUPER_ADMIN';
+});
 
 const currentFirstName = computed(() => {
   return authStore.user?.name.split(' ')[0] || 'Utilisateur';

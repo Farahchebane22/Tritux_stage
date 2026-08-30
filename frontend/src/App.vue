@@ -26,16 +26,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue';
+import { computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { useAuthStore } from './stores/auth';
 import { useNotificationsStore } from './stores/notifications';
+import { useEscalationStore } from './stores/escalation';
 import Sidebar from './components/Sidebar.vue';
 import AiChatbot from './components/AiChatbot.vue';
 
 const route = useRoute();
 const authStore = useAuthStore();
 const notificationsStore = useNotificationsStore();
+const escalationStore = useEscalationStore();
 
 const showAppShell = computed(() => {
   if (!authStore.isLoggedIn) return false;
@@ -43,16 +45,41 @@ const showAppShell = computed(() => {
   return true;
 });
 
+const isInternalStaff = computed(() => {
+  const r = authStore.user?.role;
+  return r === 'agent' || r === 'admin' || r === 'AGENT_IT' || r === 'SUPER_ADMIN';
+});
+
+const syncEscalationPolling = () => {
+  if (authStore.isLoggedIn && isInternalStaff.value && showAppShell.value) {
+    escalationStore.startPolling();
+  } else {
+    escalationStore.stopPolling();
+  }
+};
+
 const loadNotifications = () => {
   if (authStore.isLoggedIn) {
     notificationsStore.fetchNotifications();
   }
 };
 
-onMounted(loadNotifications);
+onMounted(() => {
+  loadNotifications();
+  syncEscalationPolling();
+});
+
+onUnmounted(() => {
+  escalationStore.stopPolling();
+});
+
 watch(() => authStore.isLoggedIn, (loggedIn) => {
   if (loggedIn) loadNotifications();
+  syncEscalationPolling();
 });
+
+watch(showAppShell, syncEscalationPolling);
+watch(isInternalStaff, syncEscalationPolling);
 </script>
 
 <style>
