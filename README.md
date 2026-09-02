@@ -130,7 +130,16 @@ docker compose up --build
 - App : http://localhost:8080  
 - Landing : http://localhost:3000  
 - Keycloak : http://localhost:8081  
-- API : http://localhost:5000  
+- API : http://localhost:5000/health  
+
+Variables : copier `.env.example` vers `.env`.
+
+## CI/CD et Azure
+
+Un seul fichier : `.github/workflows/ci-cd.yml`
+
+- **CI** (chaque PR / push) : frontend, 5 services Node, IA, `docker compose config`, build des 7 images.
+- **CD** (push `main` / `master`) : Azure Container Apps (ACR + MySQL + Keycloak + tous les services). Secrets : voir `docs/AZURE_DEPLOY.md`.
 
 ## Flux client (contrat)
 
@@ -147,5 +156,5 @@ Remplacer le mock par Twilio / SMS plus tard sans changer le contrat d’appel.
 
 ## Phase cloud
 
-CI/CD : `.github/workflows/ci-cd.yml`  
-Déploiement AWS : Phase 4 du cahier des charges (inchangé).
+CI + CD Azure Container Apps : `.github/workflows/ci-cd.yml`  
+Secrets GitHub : `docs/AZURE_DEPLOY.md`.

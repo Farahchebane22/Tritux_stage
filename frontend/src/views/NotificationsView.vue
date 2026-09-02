@@ -35,17 +35,17 @@
         >
           <div
             class="w-10 h-10 rounded-xl flex-shrink-0 flex items-center justify-center"
-            :style="{ background: typeConfig[notif.type].bg }"
+            :style="{ background: typeOf(notif.type).bg }"
           >
-            <component :is="typeConfig[notif.type].icon" :size="16" :style="{ color: typeConfig[notif.type].color }" />
+            <component :is="typeOf(notif.type).icon" :size="16" :style="{ color: typeOf(notif.type).color }" />
           </div>
           
           <div class="flex-1 min-w-0">
             <div class="flex items-start justify-between gap-2">
               <div class="flex-1">
                 <div class="flex items-center gap-2 mb-0.5 flex-wrap">
-                  <span class="text-[10px] font-semibold uppercase tracking-wider" :style="{ color: typeConfig[notif.type].color }">
-                    {{ typeConfig[notif.type].label }}
+                  <span class="text-[10px] font-semibold uppercase tracking-wider" :style="{ color: typeOf(notif.type).color }">
+                    {{ typeOf(notif.type).label }}
                   </span>
                   <span v-if="!notif.read" class="w-1.5 h-1.5 rounded-full bg-blue-500 flex-shrink-0" />
                 </div>
@@ -70,7 +70,8 @@ import {
   MessageSquare as MessageSquareIcon,
   GitPullRequest as GitPullRequestIcon,
   UserCheck as UserCheckIcon,
-  CheckCheck as CheckCheckIcon
+  CheckCheck as CheckCheckIcon,
+  AlertTriangle as AlertTriangleIcon
 } from 'lucide-vue-next';
 import type { NotificationType } from '../types';
 
@@ -89,12 +90,16 @@ const sortedNotifications = computed(() => {
   );
 });
 
-const typeConfig: Record<NotificationType, { icon: any; color: string; bg: string; label: string }> = {
+const typeConfig: Record<string, { icon: any; color: string; bg: string; label: string }> = {
   new_ticket: { icon: BellIcon, color: '#1D4ED8', bg: '#EFF6FF', label: 'Nouveau ticket' },
   status_change: { icon: GitPullRequestIcon, color: '#7C3AED', bg: '#FAF5FF', label: 'Changement de statut' },
   new_comment: { icon: MessageSquareIcon, color: '#0D9488', bg: '#F0FDFA', label: 'Nouveau commentaire' },
   assignment: { icon: UserCheckIcon, color: '#F59E0B', bg: '#FFFBEB', label: 'Affectation' },
+  urgent_escalation: { icon: AlertTriangleIcon, color: '#DC2626', bg: '#FEF2F2', label: 'Urgence' },
 };
+
+const DEFAULT_TYPE_CONFIG = { icon: BellIcon, color: '#64748B', bg: '#F8FAFC', label: 'Notification' };
+const typeOf = (type: string) => typeConfig[type] || DEFAULT_TYPE_CONFIG;
 
 const clickNotification = (notif: any) => {
   notificationsStore.markAsRead(notif.id);

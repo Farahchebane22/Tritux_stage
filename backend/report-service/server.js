@@ -2,6 +2,7 @@
  * report-service — Rapports périodiques par société + archivage.
  * Port 5004
  */
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import mysql from 'mysql2/promise';
@@ -587,12 +588,16 @@ app.post('/chat-log', authenticateToken, async (req, res) => {
     const id = `chatlog_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const now = new Date().toISOString();
     const societeId = req.user.societeId || null;
+    // req.user.keycloakId (si présent) identifie mieux l'utilisateur qu'un
+    // UUID Keycloak brut comparé à rien d'utile ici — pas de contrainte FK
+    // sur cette table, mais on garde une valeur cohérente pour les rapports.
+    const userId = req.user.keycloakId || req.user.id;
 
     if (useMock) {
       mockChatLogs.push({
         id,
         societe_id: societeId,
-        user_id: req.user.id,
+        user_id: userId,
         user_name: req.user.name,
         role,
         content: String(content).slice(0, 4000),
@@ -602,7 +607,7 @@ app.post('/chat-log', authenticateToken, async (req, res) => {
       await pool.query(
         `INSERT INTO chatbot_logs (id, societe_id, user_id, user_name, role, content, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [id, societeId, req.user.id, req.user.name, role, String(content).slice(0, 4000), now]
+        [id, societeId, userId, req.user.name, role, String(content).slice(0, 4000), now]
       );
     }
     res.status(201).json({ ok: true });

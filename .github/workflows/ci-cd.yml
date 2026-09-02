@@ -1,125 +1,409 @@
-name: Tritux Ticketing Platform CI/CD Pipeline
+# Tritux Helpdesk — un seul pipeline : CI (tous les services) + CD Azure Container Apps.
+#
+# Secrets GitHub (Settings → Secrets → Actions) :
+#   AZURE_CREDENTIALS        JSON du service principal (voir docs/AZURE_DEPLOY.md)
+#   MYSQL_PASSWORD           mot de passe MySQL (8+ car., majuscule + chiffre)
+#   JWT_SECRET               secret JWT prod
+#   KEYCLOAK_ADMIN_PASSWORD  mot de passe admin Keycloak
+#   GEMINI_API_KEY           optionnel
+#   AZURE_RESOURCE_GROUP     optionnel (défaut : tritux-helpdesk-rg)
+#   AZURE_LOCATION           optionnel (défaut : westeurope)
+#   DOCKERHUB_USERNAME       identifiant Docker Hub
+#   DOCKERHUB_TOKEN          Access Token Docker Hub (pas le mot de passe)
+#
+# Sans AZURE_CREDENTIALS, le CD Azure est ignoré.
+# Sans DOCKERHUB_TOKEN, le push Docker Hub est ignoré.
+
+name: Tritux Helpdesk CI/CD
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [main, master]
   pull_request:
-    branches: [ "main", "master" ]
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: cicd-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+  PYTHON_VERSION: "3.10"
 
 jobs:
-  # 1. Continuous Integration (Lint, Typecheck, Build Test)
   ci-frontend:
+    name: CI — Frontend
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: 'npm'
-          cache-dependency-path: './frontend/package-lock.json'
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci || npm install
+      - run: npm run build
+        env:
+          VITE_API_URL: http://localhost:5000/api
+          VITE_KEYCLOAK_ENABLED: "false"
 
-      - name: Install Frontend Dependencies
-        run: |
-          cd frontend
-          npm ci || npm install
-
-      - name: Check Types
-        run: |
-          cd frontend
-          npx vue-tsc --noEmit
-
-      - name: Build Frontend
-        run: |
-          cd frontend
-          npm run build
-
-  ci-backend-services:
+  ci-backend:
+    name: CI — ${{ matrix.service }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: api-gateway
+            path: backend/api-gateway
+          - service: user-service
+            path: backend/user-service
+          - service: ticket-service
+            path: backend/ticket-service
+          - service: contract-service
+            path: backend/contract-service
+          - service: report-service
+            path: backend/report-service
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
-
-      - name: Validate API Gateway
-        run: |
-          cd backend/api-gateway
-          npm install
-
-      - name: Validate User Service
-        run: |
-          cd backend/user-service
-          npm install
-
-      - name: Validate Ticket Service
-        run: |
-          cd backend/ticket-service
-          npm install
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ${{ matrix.path }}/package-lock.json
+      - working-directory: ${{ matrix.path }}
+        run: npm ci || npm install
+      - working-directory: ${{ matrix.path }}
+        run: node --check server.js
 
   ci-python-ai:
+    name: CI — AI service
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
-
-      - name: Setup Python
-        uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: ${{ env.PYTHON_VERSION }}
+      - working-directory: backend/ai-service
+        run: pip install -r requirements.txt
+      - working-directory: backend/ai-service
+        run: python -m compileall -q .
 
-      - name: Validate AI Service Requirements
+  compose-validate:
+    name: CI — docker compose
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose -f docker-compose.yml config --quiet
+
+  docker-build:
+    name: CI — Docker ${{ matrix.name }}
+    needs: [ci-frontend, ci-backend, ci-python-ai, compose-validate]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: frontend
+            context: ./frontend
+            file: ./frontend/Dockerfile
+          - name: api-gateway
+            context: ./backend/api-gateway
+            file: ./backend/api-gateway/Dockerfile
+          - name: user-service
+            context: ./backend
+            file: ./backend/user-service/Dockerfile
+          - name: ticket-service
+            context: ./backend
+            file: ./backend/ticket-service/Dockerfile
+          - name: contract-service
+            context: ./backend
+            file: ./backend/contract-service/Dockerfile
+          - name: report-service
+            context: ./backend
+            file: ./backend/report-service/Dockerfile
+          - name: ai-service
+            context: ./backend/ai-service
+            file: ./backend/ai-service/Dockerfile
+          - name: mysql
+            context: ./database
+            file: ./database/Dockerfile
+          - name: keycloak
+            context: ./keycloak
+            file: ./keycloak/Dockerfile
+          - name: landing
+            context: ./landing
+            file: ./landing/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Décider du push Docker Hub
+        id: hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
-          cd backend/ai-service
-          pip install -r requirements.txt
+          if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ] && [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "push=true" >> "$GITHUB_OUTPUT"
+            echo "tags=${DOCKERHUB_USERNAME}/tritux-${{ matrix.name }}:${{ github.sha }},${DOCKERHUB_USERNAME}/tritux-${{ matrix.name }}:latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "push=false" >> "$GITHUB_OUTPUT"
+            echo "tags=tritux/${{ matrix.name }}:ci" >> "$GITHUB_OUTPUT"
+          fi
 
-  # 2. Build Docker Images & Simulate Push/Deployment
-  docker-build-push:
-    needs: [ci-frontend, ci-backend-services, ci-python-ai]
+      - name: Login Docker Hub
+        if: steps.hub.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: ${{ steps.hub.outputs.push == 'true' }}
+          tags: ${{ steps.hub.outputs.tags }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=min,scope=${{ matrix.name }}
+
+  deploy-azure:
+    name: CD — Azure Container Apps
+    needs: docker-build
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
+      - name: Gate secrets Azure
+        id: gate
+        env:
+          CREDS: ${{ secrets.AZURE_CREDENTIALS }}
+        run: |
+          if [ -z "$CREDS" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "AZURE_CREDENTIALS manquant — CD ignoré. Voir l'en-tête de ce fichier."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Set up Docker Buildx
-        uses: actions/setup-buildx-action@v2
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.skip != 'true'
 
-      - name: Build Frontend Image
-        uses: docker/build-push-action@v4
+      - name: Login Azure
+        if: steps.gate.outputs.skip != 'true'
+        uses: azure/login@v2
         with:
-          context: ./frontend
-          push: false
-          tags: tritux/ticketing-frontend:latest
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Build API Gateway Image
-        uses: docker/build-push-action@v4
-        with:
-          context: ./backend/api-gateway
-          push: false
-          tags: tritux/api-gateway:latest
+      - uses: docker/setup-buildx-action@v3
+        if: steps.gate.outputs.skip != 'true'
 
-      - name: Build User Service Image
-        uses: docker/build-push-action@v4
-        with:
-          context: ./backend/user-service
-          push: false
-          tags: tritux/user-service:latest
+      - name: Provision + push images + deploy
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          KEYCLOAK_ADMIN_PASSWORD: ${{ secrets.KEYCLOAK_ADMIN_PASSWORD }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          AZURE_LOCATION: ${{ secrets.AZURE_LOCATION }}
+        run: |
+          set -euo pipefail
 
-      - name: Build Ticket Service Image
-        uses: docker/build-push-action@v4
-        with:
-          context: ./backend/ticket-service
-          push: false
-          tags: tritux/ticket-service:latest
+          RG="${AZURE_RESOURCE_GROUP:-tritux-helpdesk-rg}"
+          LOC="${AZURE_LOCATION:-westeurope}"
+          ACR="trx$(echo '${{ github.repository_id }}' | tr -cd '0-9' | cut -c1-18)"
+          ENV_NAME="trx-env"
+          TAG="${{ github.sha }}"
+          MYSQL_PASSWORD="${MYSQL_PASSWORD:-TrituxDb1}"
+          JWT_SECRET="${JWT_SECRET:-tritux_secret_key_12345}"
+          KEYCLOAK_ADMIN_PASSWORD="${KEYCLOAK_ADMIN_PASSWORD:-admin}"
 
-      - name: Build AI Service Image
-        uses: docker/build-push-action@v4
-        with:
-          context: ./backend/ai-service
-          push: false
-          tags: tritux/ai-service:latest
+          echo "Resource group=$RG location=$LOC acr=$ACR"
+
+          az group create --name "$RG" --location "$LOC" --output none
+
+          az provider register --namespace Microsoft.App --wait
+          az provider register --namespace Microsoft.ContainerRegistry --wait
+          az provider register --namespace Microsoft.OperationalInsights --wait
+
+          az extension add --name containerapp --upgrade --yes 2>/dev/null || az extension add --name containerapp --yes
+
+          if ! az acr show --name "$ACR" --resource-group "$RG" >/dev/null 2>&1; then
+            az acr create --name "$ACR" --resource-group "$RG" --sku Basic --admin-enabled true --output none
+          else
+            az acr update --name "$ACR" --admin-enabled true --output none
+          fi
+
+          LOGIN_SERVER=$(az acr show --name "$ACR" --query loginServer -o tsv)
+          ACR_USER=$(az acr credential show --name "$ACR" --query username -o tsv)
+          ACR_PASS=$(az acr credential show --name "$ACR" --query passwords[0].value -o tsv)
+
+          echo "$ACR_PASS" | docker login "$LOGIN_SERVER" -u "$ACR_USER" --password-stdin
+
+          if ! az containerapp env show --name "$ENV_NAME" --resource-group "$RG" >/dev/null 2>&1; then
+            az containerapp env create --name "$ENV_NAME" --resource-group "$RG" --location "$LOC" --output none
+          fi
+
+          DOMAIN=$(az containerapp env show --name "$ENV_NAME" --resource-group "$RG" --query properties.defaultDomain -o tsv)
+          echo "ACA domain=$DOMAIN"
+
+          API_URL="https://trx-gateway.${DOMAIN}/api"
+          KC_URL="https://trx-keycloak.${DOMAIN}"
+
+          echo "Building and pushing images (ACR)…"
+
+          docker buildx build --push -t "$LOGIN_SERVER/trx-mysql:$TAG" -f database/Dockerfile ./database
+          docker buildx build --push -t "$LOGIN_SERVER/trx-keycloak:$TAG" -f keycloak/Dockerfile ./keycloak
+          docker buildx build --push -t "$LOGIN_SERVER/trx-landing:$TAG" -f landing/Dockerfile ./landing
+
+          docker buildx build --push \
+            --file frontend/Dockerfile \
+            --build-arg "VITE_API_URL=${API_URL}" \
+            --build-arg "VITE_KEYCLOAK_ENABLED=true" \
+            --build-arg "VITE_KEYCLOAK_URL=${KC_URL}" \
+            --build-arg "VITE_KEYCLOAK_REALM=tritux-helpdesk" \
+            --build-arg "VITE_KEYCLOAK_CLIENT_ID=tritux-frontend" \
+            -t "$LOGIN_SERVER/trx-frontend:$TAG" \
+            ./frontend
+
+          docker buildx build --push -f backend/api-gateway/Dockerfile -t "$LOGIN_SERVER/trx-gateway:$TAG" ./backend/api-gateway
+          docker buildx build --push -f backend/user-service/Dockerfile -t "$LOGIN_SERVER/trx-user:$TAG" ./backend
+          docker buildx build --push -f backend/ticket-service/Dockerfile -t "$LOGIN_SERVER/trx-ticket:$TAG" ./backend
+          docker buildx build --push -f backend/contract-service/Dockerfile -t "$LOGIN_SERVER/trx-contract:$TAG" ./backend
+          docker buildx build --push -f backend/report-service/Dockerfile -t "$LOGIN_SERVER/trx-report:$TAG" ./backend
+          docker buildx build --push -f backend/ai-service/Dockerfile -t "$LOGIN_SERVER/trx-ai:$TAG" ./backend/ai-service
+
+          upsert() {
+            local name="$1"
+            local image="$2"
+            local cpu="$3"
+            local mem="$4"
+            local ingress="$5"
+            local port="$6"
+            shift 6
+            local extra=("$@")
+
+            if az containerapp show --name "$name" --resource-group "$RG" >/dev/null 2>&1; then
+              az containerapp update --name "$name" --resource-group "$RG" \
+                --image "$image" \
+                --cpu "$cpu" --memory "$mem" \
+                --set-env-vars "${extra[@]}" \
+                --output none
+            else
+              az containerapp create --name "$name" --resource-group "$RG" --environment "$ENV_NAME" \
+                --image "$image" \
+                --cpu "$cpu" --memory "$mem" \
+                --min-replicas 1 --max-replicas 1 \
+                --ingress "$ingress" --target-port "$port" \
+                --registry-server "$LOGIN_SERVER" --registry-username "$ACR_USER" --registry-password "$ACR_PASS" \
+                --env-vars "${extra[@]}" \
+                --output none
+            fi
+          }
+
+          echo "Deploying container apps…"
+
+          if az containerapp show --name trx-mysql --resource-group "$RG" >/dev/null 2>&1; then
+            az containerapp update --name trx-mysql --resource-group "$RG" \
+              --image "$LOGIN_SERVER/trx-mysql:$TAG" --output none
+          else
+            az containerapp create --name trx-mysql --resource-group "$RG" --environment "$ENV_NAME" \
+              --image "$LOGIN_SERVER/trx-mysql:$TAG" \
+              --cpu 0.5 --memory 1.0Gi \
+              --min-replicas 1 --max-replicas 1 \
+              --ingress internal --target-port 3306 --transport tcp \
+              --registry-server "$LOGIN_SERVER" --registry-username "$ACR_USER" --registry-password "$ACR_PASS" \
+              --env-vars \
+                MYSQL_ROOT_PASSWORD="$MYSQL_PASSWORD" \
+                MYSQL_DATABASE=tritux_db \
+                MYSQL_USER=tritux_user \
+                MYSQL_PASSWORD="$MYSQL_PASSWORD" \
+              --output none
+          fi
+
+          DB_HOST="trx-mysql.internal.${DOMAIN}"
+
+          upsert trx-user "$LOGIN_SERVER/trx-user:$TAG" 0.25 0.5Gi internal 5001 \
+            PORT=5001 \
+            JWT_SECRET="$JWT_SECRET" \
+            KEYCLOAK_ENABLED=true \
+            KEYCLOAK_URL="$KC_URL" \
+            KEYCLOAK_REALM=tritux-helpdesk \
+            DB_HOST="$DB_HOST" \
+            DB_USER=tritux_user \
+            DB_PASSWORD="$MYSQL_PASSWORD" \
+            DB_NAME=tritux_db
+
+          upsert trx-contract "$LOGIN_SERVER/trx-contract:$TAG" 0.25 0.5Gi internal 5003 \
+            PORT=5003 \
+            JWT_SECRET="$JWT_SECRET" \
+            KEYCLOAK_ENABLED=true \
+            KEYCLOAK_URL="$KC_URL" \
+            KEYCLOAK_REALM=tritux-helpdesk \
+            DB_HOST="$DB_HOST" \
+            DB_USER=tritux_user \
+            DB_PASSWORD="$MYSQL_PASSWORD" \
+            DB_NAME=tritux_db
+
+          upsert trx-ticket "$LOGIN_SERVER/trx-ticket:$TAG" 0.25 0.5Gi internal 5002 \
+            PORT=5002 \
+            JWT_SECRET="$JWT_SECRET" \
+            KEYCLOAK_ENABLED=true \
+            KEYCLOAK_URL="$KC_URL" \
+            KEYCLOAK_REALM=tritux-helpdesk \
+            CONTRACT_SERVICE_URL="https://trx-contract.internal.${DOMAIN}" \
+            DB_HOST="$DB_HOST" \
+            DB_USER=tritux_user \
+            DB_PASSWORD="$MYSQL_PASSWORD" \
+            DB_NAME=tritux_db
+
+          upsert trx-report "$LOGIN_SERVER/trx-report:$TAG" 0.25 0.5Gi internal 5004 \
+            PORT=5004 \
+            JWT_SECRET="$JWT_SECRET" \
+            KEYCLOAK_ENABLED=true \
+            KEYCLOAK_URL="$KC_URL" \
+            KEYCLOAK_REALM=tritux-helpdesk \
+            DB_HOST="$DB_HOST" \
+            DB_USER=tritux_user \
+            DB_PASSWORD="$MYSQL_PASSWORD" \
+            DB_NAME=tritux_db
+
+          upsert trx-ai "$LOGIN_SERVER/trx-ai:$TAG" 0.5 1.0Gi internal 8000 \
+            GEMINI_API_KEY="${GEMINI_API_KEY:-}"
+
+          upsert trx-gateway "$LOGIN_SERVER/trx-gateway:$TAG" 0.25 0.5Gi external 5000 \
+            PORT=5000 \
+            USER_SERVICE_URL="https://trx-user.internal.${DOMAIN}" \
+            TICKET_SERVICE_URL="https://trx-ticket.internal.${DOMAIN}" \
+            CONTRACT_SERVICE_URL="https://trx-contract.internal.${DOMAIN}" \
+            REPORT_SERVICE_URL="https://trx-report.internal.${DOMAIN}" \
+            AI_SERVICE_URL="https://trx-ai.internal.${DOMAIN}"
+
+          upsert trx-keycloak "$LOGIN_SERVER/trx-keycloak:$TAG" 0.75 1.5Gi external 8080 \
+            KEYCLOAK_ADMIN=admin \
+            KEYCLOAK_ADMIN_PASSWORD="$KEYCLOAK_ADMIN_PASSWORD" \
+            KC_HOSTNAME="trx-keycloak.${DOMAIN}" \
+            KC_HOSTNAME_STRICT=false \
+            KC_HTTP_ENABLED=true \
+            KC_PROXY_HEADERS=xforwarded
+
+          upsert trx-frontend "$LOGIN_SERVER/trx-frontend:$TAG" 0.25 0.5Gi external 80 \
+            NGINX=1
+
+          upsert trx-landing "$LOGIN_SERVER/trx-landing:$TAG" 0.25 0.5Gi external 80 \
+            NGINX=1
+
+          echo ""
+          echo "=== URLs Azure ==="
+          echo "App      : https://trx-frontend.${DOMAIN}"
+          echo "Landing  : https://trx-landing.${DOMAIN}"
+          echo "API      : https://trx-gateway.${DOMAIN}/health"
+          echo "Keycloak : https://trx-keycloak.${DOMAIN}"
+          echo "=========="
+          echo "Dans Keycloak → Client tritux-frontend, ajouter Valid redirect URIs : https://trx-frontend.${DOMAIN}/*"

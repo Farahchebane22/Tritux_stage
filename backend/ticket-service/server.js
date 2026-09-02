@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import mysql from 'mysql2/promise';
@@ -267,6 +268,34 @@ function displayName(user) {
   return user.id || 'Utilisateur';
 }
 
+function parseSpecialties(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  return String(raw).split(',').map(s => s.trim()).filter(Boolean);
+}
+
+/**
+ * Sélectionne automatiquement un agent IT spécialiste de la catégorie du
+ * ticket (ou n'importe quel agent si aucun spécialiste n'existe), pour
+ * l'auto-assignation immédiate des tickets urgents (voir
+ * docs/workflow-urgence-24-7.md).
+ */
+async function pickAutoAssignAgent(category) {
+  if (useMock || !pool) return null;
+  try {
+    const [rows] = await pool.query(
+      "SELECT id, name, email, specialties FROM users WHERE role IN ('AGENT_IT', 'agent')"
+    );
+    const withSpecs = rows.map(r => ({ ...r, specs: parseSpecialties(r.specialties) }));
+    const matched = withSpecs.filter(a => a.specs.includes(category) || a.specs.includes('other'));
+    const candidates = matched.length ? matched : withSpecs;
+    return candidates[0] || null;
+  } catch (e) {
+    console.warn('[Ticket Service] pickAutoAssignAgent a échoué:', e.message);
+    return null;
+  }
+}
+
 async function buildTicketFromDb(id) {
   const [rows] = await pool.query('SELECT * FROM tickets WHERE id = ?', [id]);
   if (rows.length === 0) return null;
@@ -399,16 +428,17 @@ function resolveAgent(assignedTo, assignedToId, agentsList) {
 
 app.get('/notifications', authenticateToken, async (req, res) => {
   try {
+    const localId = await resolveLocalUserId(req.user);
     if (useMock) {
       const list = mockNotifications
-        .filter(n => n.userId === req.user.id)
+        .filter(n => n.userId === localId)
         .map(toPublicNotification);
       return res.json(list);
     }
 
     const [rows] = await pool.query(
       'SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC',
-      [req.user.id]
+      [localId]
     );
     res.json(rows.map(toPublicNotification));
   } catch (err) {
@@ -419,8 +449,9 @@ app.get('/notifications', authenticateToken, async (req, res) => {
 app.patch('/notifications/:id/read', authenticateToken, async (req, res) => {
   const { id } = req.params;
   try {
+    const localId = await resolveLocalUserId(req.user);
     if (useMock) {
-      const notif = mockNotifications.find(n => n.id === id && n.userId === req.user.id);
+      const notif = mockNotifications.find(n => n.id === id && n.userId === localId);
       if (!notif) return res.status(404).json({ message: 'Notification non trouvée' });
       notif.read = true;
       return res.json(toPublicNotification(notif));
@@ -428,7 +459,7 @@ app.patch('/notifications/:id/read', authenticateToken, async (req, res) => {
 
     const [result] = await pool.query(
       'UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?',
-      [id, req.user.id]
+      [id, localId]
     );
     if (result.affectedRows === 0) {
       return res.status(404).json({ message: 'Notification non trouvée' });
@@ -442,16 +473,17 @@ app.patch('/notifications/:id/read', authenticateToken, async (req, res) => {
 
 app.post('/notifications/read-all', authenticateToken, async (req, res) => {
   try {
+    const localId = await resolveLocalUserId(req.user);
     if (useMock) {
       mockNotifications.forEach(n => {
-        if (n.userId === req.user.id) n.read = true;
+        if (n.userId === localId) n.read = true;
       });
       return res.json({ message: 'Toutes les notifications ont été marquées comme lues' });
     }
 
     await pool.query(
       'UPDATE notifications SET is_read = 1 WHERE user_id = ?',
-      [req.user.id]
+      [localId]
     );
     res.json({ message: 'Toutes les notifications ont été marquées comme lues' });
   } catch (err) {
@@ -466,7 +498,12 @@ function canViewTicket(user, ticket, localId) {
   const role = mapLegacyRole(user.role);
   const id = localId || user.id;
   if (role === 'SUPER_ADMIN' || role === 'admin') return true;
-  if (role === 'AGENT_IT' || role === 'agent') return ticket.assignedTo?.id === id;
+  if (role === 'AGENT_IT' || role === 'agent') {
+    // Visible si assigné à cet agent, OU si urgent et pas encore assigné
+    // (filet de sécurité : permet à n'importe quel agent de le prendre en
+    // charge si l'auto-assignation n'a trouvé personne).
+    return ticket.assignedTo?.id === id || (ticket.priority === 'urgent' && !ticket.assignedTo);
+  }
   if (role === 'CLIENT_ADMIN' && user.societeId) {
     return ticket.societeId === user.societeId || ticket.createdBy?.id === id;
   }
@@ -497,24 +534,6 @@ async function evaluateSla({ authHeader, societeId, priority, createdAt, ticketI
 const ESCALATION_PALIER_2_MIN = 5;
 const ESCALATION_PALIER_3_MIN = 15;
 
-async function notifyUrgentPalier1({ authHeader, ticketId, category, canal }) {
-  try {
-    const resp = await fetch(`${CONTRACT_SERVICE_URL}/notify-urgent`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: authHeader || '',
-      },
-      body: JSON.stringify({ ticketId, category, canal: canal || 'email', palier: 1 }),
-    });
-    if (!resp.ok) {
-      console.warn('[Ticket Service] notify-urgent HTTP', resp.status);
-    }
-  } catch (e) {
-    console.warn('[Ticket Service] notify-urgent failed:', e.message);
-  }
-}
-
 async function getStaffByRole(roleName) {
   if (useMock || !pool) return [];
   const roles =
@@ -541,7 +560,7 @@ async function getMaxPalier(ticketId) {
   return rows[0]?.maxP || 0;
 }
 
-async function notifyEscalation({ authHeader, ticketId, category, canal, palier, ticketTitle, societeId, targetRole }) {
+async function notifyEscalation({ authHeader, ticketId, category, canal, palier, ticketTitle, societeId, targetRole, agentId }) {
   try {
     const resp = await fetch(`${CONTRACT_SERVICE_URL}/notify-urgent`, {
       method: 'POST',
@@ -549,7 +568,7 @@ async function notifyEscalation({ authHeader, ticketId, category, canal, palier,
         'Content-Type': 'application/json',
         Authorization: authHeader || '',
       },
-      body: JSON.stringify({ ticketId, category, canal: canal || 'email', palier, ticketTitle, societeId, targetRole }),
+      body: JSON.stringify({ ticketId, category, canal: canal || 'email', palier, ticketTitle, societeId, targetRole, agentId }),
     });
     if (!resp.ok) {
       console.warn(`[Ticket Service] notify-urgent (palier ${palier}) HTTP`, resp.status);
@@ -662,6 +681,10 @@ async function getUrgentEscalationTickets(authHeader) {
  * en polling par le frontend (toutes les 30s) pour alimenter le badge et
  * la popup de palier 3.
  */
+app.get('/health', (_req, res) => {
+  res.json({ status: 'UP', service: 'ticket-service', mock: useMock });
+});
+
 app.get('/urgent-escalation', authenticateToken, async (req, res) => {
   try {
     const role = mapLegacyRole(req.user.role);
@@ -687,7 +710,7 @@ app.get('/', authenticateToken, async (req, res) => {
     let query = 'SELECT id FROM tickets';
     const params = [];
     if (role === 'AGENT_IT' || role === 'agent') {
-      query += ' WHERE assigned_to_id = ?';
+      query += " WHERE assigned_to_id = ? OR (priority = 'urgent' AND assigned_to_id IS NULL)";
       params.push(localId);
     } else if (role === 'CLIENT_ADMIN' && req.user.societeId) {
       query += ' WHERE societe_id = ?';
@@ -754,14 +777,35 @@ app.post('/', authenticateToken, async (req, res) => {
     category: category || 'other',
   });
 
-  const historyEntry = {
-    id: `h_${Date.now()}`,
-    field: 'status',
-    oldValue: '',
-    newValue: 'open',
-    changedBy: { id: creatorId, name: creatorName, email: req.user.email },
-    changedAt: now
-  };
+  // Auto-assignation immédiate pour les tickets urgents couverts par un
+  // contrat à notification immédiate (ex: 24/7) — pas d'attente d'une
+  // assignation manuelle par l'admin (voir docs/workflow-urgence-24-7.md).
+  let autoAssignedAgent = null;
+  if ((priority || 'medium') === 'urgent' && sla?.escalate && !sla?.deferred) {
+    autoAssignedAgent = await pickAutoAssignAgent(category || 'other');
+  }
+
+  const historyEntries = [
+    {
+      id: `h_${Date.now()}`,
+      field: 'status',
+      oldValue: '',
+      newValue: 'open',
+      changedBy: { id: creatorId, name: creatorName, email: req.user.email },
+      changedAt: now
+    }
+  ];
+  if (autoAssignedAgent) {
+    historyEntries.push({
+      id: `h_${Date.now()}_a`,
+      field: 'assignedTo',
+      oldValue: 'Non assigné',
+      newValue: autoAssignedAgent.name,
+      changedBy: { id: creatorId, name: 'Système (auto-assignation urgence)', email: req.user.email },
+      changedAt: now
+    });
+  }
+  const historyEntry = historyEntries[0];
 
   const newTicket = {
     id,
@@ -771,6 +815,9 @@ app.post('/', authenticateToken, async (req, res) => {
     priority: priority || 'medium',
     category: category || 'other',
     createdBy: { id: creatorId, name: creatorName, email: req.user.email },
+    assignedTo: autoAssignedAgent
+      ? { id: autoAssignedAgent.id, name: autoAssignedAgent.name, email: autoAssignedAgent.email }
+      : null,
     createdAt: now,
     updatedAt: now,
     societeId,
@@ -789,7 +836,7 @@ app.post('/', authenticateToken, async (req, res) => {
       uploadedBy: creatorName,
       uploadedAt: now
     })),
-    history: [historyEntry],
+    history: historyEntries,
     aiSuggestion: aiSuggestion || null
   };
 
@@ -801,13 +848,15 @@ app.post('/', authenticateToken, async (req, res) => {
         await pool.query(
           `INSERT INTO tickets
            (id, title, description, status, priority, category, created_by_id, created_by_name, created_by_email,
-            created_at, updated_at, societe_id, application_id, contrat_id, sla_deadline, sla_deferred, sla_resume_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            created_at, updated_at, societe_id, application_id, contrat_id, sla_deadline, sla_deferred, sla_resume_at,
+            assigned_to_id, assigned_to_name, assigned_to_email)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             id, title, description, 'open', newTicket.priority, newTicket.category,
             creatorId, creatorName, req.user.email, now, now,
             societeId, applicationId || null, sla?.contratId || null,
-            sla?.slaDeadline || null, sla?.deferred ? 1 : 0, sla?.resumeAt || null
+            sla?.slaDeadline || null, sla?.deferred ? 1 : 0, sla?.resumeAt || null,
+            autoAssignedAgent?.id || null, autoAssignedAgent?.name || null, autoAssignedAgent?.email || null
           ]
         );
       } catch (colErr) {
@@ -818,10 +867,12 @@ app.post('/', authenticateToken, async (req, res) => {
         );
       }
 
-      await pool.query(
-        'INSERT INTO history (id, ticket_id, field, old_value, new_value, changed_by_id, changed_by_name, changed_by_email, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [historyEntry.id, id, 'status', '', 'open', creatorId, creatorName, req.user.email, now]
-      );
+      for (const h of historyEntries) {
+        await pool.query(
+          'INSERT INTO history (id, ticket_id, field, old_value, new_value, changed_by_id, changed_by_name, changed_by_email, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [h.id, id, h.field, h.oldValue, h.newValue, h.changedBy.id, h.changedBy.name, h.changedBy.email, h.changedAt]
+        );
+      }
 
       for (const a of newTicket.attachments) {
         await pool.query(
@@ -863,16 +914,46 @@ app.post('/', authenticateToken, async (req, res) => {
       }
     }
 
-    if (
-      newTicket.priority === 'urgent' &&
-      sla?.escalate &&
-      !sla?.deferred
-    ) {
-      await notifyUrgentPalier1({
+    if (autoAssignedAgent) {
+      // Agent déjà auto-assigné : on ne notifie QUE lui (appel+SMS), pas tous
+      // les autres spécialistes.
+      await notifyEscalation({
         authHeader: req.headers.authorization,
         ticketId: id,
         category: newTicket.category,
         canal: sla?.canal || sla?.rule?.canal,
+        palier: 1,
+        ticketTitle: title,
+        societeId,
+        agentId: autoAssignedAgent.id,
+      });
+      try {
+        await createNotification({
+          userId: autoAssignedAgent.id,
+          type: 'assignment',
+          message: `🔴 Ticket URGENT ${id} vous a été automatiquement assigné — intervention immédiate requise`,
+          ticketId: id,
+          ticketTitle: title,
+        });
+      } catch (e) {
+        console.warn('[Ticket Service] Notification auto-assignation échouée:', e.message);
+      }
+    } else if (
+      newTicket.priority === 'urgent' &&
+      sla?.escalate &&
+      !sla?.deferred
+    ) {
+      // Aucun agent auto-assignable trouvé : on repasse sur l'alerte large
+      // aux spécialistes (palier 1 classique, en attente d'une prise en charge).
+      await notifyEscalation({
+        authHeader: req.headers.authorization,
+        ticketId: id,
+        category: newTicket.category,
+        canal: sla?.canal || sla?.rule?.canal,
+        palier: 1,
+        ticketTitle: title,
+        societeId,
+        targetRole: 'AGENT_IT',
       });
     }
 
@@ -1101,7 +1182,7 @@ app.post('/:id/comments', authenticateToken, async (req, res) => {
         notifyUserId = ticket.assignedTo?.id;
       }
 
-      if (notifyUserId && notifyUserId !== req.user.id) {
+      if (notifyUserId && notifyUserId !== authorId) {
         await createNotification({
           userId: notifyUserId,
           type: 'new_comment',

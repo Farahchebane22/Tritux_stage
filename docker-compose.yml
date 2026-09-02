@@ -6,10 +6,10 @@ services:
     container_name: tritux-mysql
     restart: always
     environment:
-      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_password}
       MYSQL_DATABASE: tritux_db
       MYSQL_USER: tritux_user
-      MYSQL_PASSWORD: tritux_password
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-tritux_password}
     ports:
       - "3306:3306"
     volumes:
@@ -26,8 +26,8 @@ services:
     container_name: tritux-keycloak
     command: ["start-dev", "--import-realm"]
     environment:
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: admin
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
       KC_HTTP_PORT: 8080
     ports:
       - "8081:8080"
@@ -57,16 +57,22 @@ services:
     restart: always
     environment:
       PORT: 5001
-      JWT_SECRET: tritux_secret_key_12345
-      KEYCLOAK_ENABLED: "true"
+      JWT_SECRET: ${JWT_SECRET:-tritux_secret_key_12345}
+      KEYCLOAK_ENABLED: ${KEYCLOAK_ENABLED:-true}
       KEYCLOAK_URL: http://keycloak:8080
       KEYCLOAK_REALM: tritux-helpdesk
       DB_HOST: mysql-db
       DB_USER: tritux_user
-      DB_PASSWORD: tritux_password
+      DB_PASSWORD: ${MYSQL_PASSWORD:-tritux_password}
       DB_NAME: tritux_db
     ports:
       - "5001:5001"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     depends_on:
       mysql-db:
         condition: service_healthy
@@ -79,17 +85,23 @@ services:
     restart: always
     environment:
       PORT: 5002
-      JWT_SECRET: tritux_secret_key_12345
-      KEYCLOAK_ENABLED: "true"
+      JWT_SECRET: ${JWT_SECRET:-tritux_secret_key_12345}
+      KEYCLOAK_ENABLED: ${KEYCLOAK_ENABLED:-true}
       KEYCLOAK_URL: http://keycloak:8080
       KEYCLOAK_REALM: tritux-helpdesk
       CONTRACT_SERVICE_URL: http://contract-service:5003
       DB_HOST: mysql-db
       DB_USER: tritux_user
-      DB_PASSWORD: tritux_password
+      DB_PASSWORD: ${MYSQL_PASSWORD:-tritux_password}
       DB_NAME: tritux_db
     ports:
       - "5002:5002"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     depends_on:
       mysql-db:
         condition: service_healthy
@@ -104,16 +116,22 @@ services:
     restart: always
     environment:
       PORT: 5003
-      JWT_SECRET: tritux_secret_key_12345
-      KEYCLOAK_ENABLED: "true"
+      JWT_SECRET: ${JWT_SECRET:-tritux_secret_key_12345}
+      KEYCLOAK_ENABLED: ${KEYCLOAK_ENABLED:-true}
       KEYCLOAK_URL: http://keycloak:8080
       KEYCLOAK_REALM: tritux-helpdesk
       DB_HOST: mysql-db
       DB_USER: tritux_user
-      DB_PASSWORD: tritux_password
+      DB_PASSWORD: ${MYSQL_PASSWORD:-tritux_password}
       DB_NAME: tritux_db
     ports:
       - "5003:5003"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5003/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     depends_on:
       mysql-db:
         condition: service_healthy
@@ -126,16 +144,22 @@ services:
     restart: always
     environment:
       PORT: 5004
-      JWT_SECRET: tritux_secret_key_12345
-      KEYCLOAK_ENABLED: "true"
+      JWT_SECRET: ${JWT_SECRET:-tritux_secret_key_12345}
+      KEYCLOAK_ENABLED: ${KEYCLOAK_ENABLED:-true}
       KEYCLOAK_URL: http://keycloak:8080
       KEYCLOAK_REALM: tritux-helpdesk
       DB_HOST: mysql-db
       DB_USER: tritux_user
-      DB_PASSWORD: tritux_password
+      DB_PASSWORD: ${MYSQL_PASSWORD:-tritux_password}
       DB_NAME: tritux_db
     ports:
       - "5004:5004"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5004/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     depends_on:
       mysql-db:
         condition: service_healthy
@@ -154,6 +178,12 @@ services:
       AI_SERVICE_URL: http://ai-service:8000
     ports:
       - "5000:5000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     depends_on:
       - user-service
       - ticket-service
@@ -165,15 +195,20 @@ services:
     build:
       context: ./frontend
       args:
-        VITE_API_URL: http://localhost:5000/api
-        VITE_KEYCLOAK_ENABLED: "true"
-        VITE_KEYCLOAK_URL: http://localhost:8081
-        VITE_KEYCLOAK_REALM: tritux-helpdesk
-        VITE_KEYCLOAK_CLIENT_ID: tritux-frontend
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:5000/api}
+        VITE_KEYCLOAK_ENABLED: ${VITE_KEYCLOAK_ENABLED:-true}
+        VITE_KEYCLOAK_URL: ${VITE_KEYCLOAK_URL:-http://localhost:8081}
+        VITE_KEYCLOAK_REALM: ${VITE_KEYCLOAK_REALM:-tritux-helpdesk}
+        VITE_KEYCLOAK_CLIENT_ID: ${VITE_KEYCLOAK_CLIENT_ID:-tritux-frontend}
     container_name: tritux-frontend
     restart: always
     ports:
       - "8080:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     depends_on:
       - api-gateway
       - keycloak

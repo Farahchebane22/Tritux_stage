@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import jwt from 'jsonwebtoken';
@@ -586,7 +587,7 @@ app.put('/profile/password', authenticateToken, async (req, res) => {
   }
 
   try {
-    const row = await findUserById(req.user.id);
+    const row = await resolveLocalUser(req.user);
     if (!row) {
       return res.status(404).json({ message: 'Utilisateur non trouvé' });
     }
@@ -611,7 +612,7 @@ app.put('/profile/password', authenticateToken, async (req, res) => {
 
     await pool.query('UPDATE users SET password_hash = ? WHERE id = ?', [
       passwordHash,
-      req.user.id
+      row.id
     ]);
     res.json({ message: 'Mot de passe mis à jour' });
   } catch (err) {
@@ -721,6 +722,10 @@ app.post('/admin/provision-keycloak', authenticateToken, async (req, res) => {
   } catch (err) {
     res.status(500).json({ message: 'Provisioning Keycloak échoué', error: err.message });
   }
+});
+
+app.get('/health', (_req, res) => {
+  res.json({ status: 'UP', service: 'user-service', mock: useMock });
 });
 
 app.listen(PORT, () => {

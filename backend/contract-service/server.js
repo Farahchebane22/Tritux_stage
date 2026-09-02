@@ -470,13 +470,23 @@ app.post('/notify-urgent', authenticateToken, async (req, res) => {
       ticketTitle,
       societeId,
       targetRole = 'AGENT_IT',
+      agentId,
     } = req.body;
     if (!ticketId) {
       return res.status(400).json({ message: 'ticketId requis' });
     }
 
     const societe = societeId ? await getSociete(societeId) : null;
-    const recipients = await getStaffForEscalation(targetRole, category);
+
+    let recipients;
+    if (agentId) {
+      // Notifie UNIQUEMENT l'agent déjà auto-assigné (pas tous les spécialistes).
+      const agents = await getItAgents();
+      const one = agents.find((a) => a.id === agentId);
+      recipients = one ? [one] : [];
+    } else {
+      recipients = await getStaffForEscalation(targetRole, category);
+    }
 
     const results = [];
     for (const agent of recipients) {
