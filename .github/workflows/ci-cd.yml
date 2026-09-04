@@ -177,15 +177,29 @@ jobs:
   # voir docs/azure-deployment.md §2).
   deploy-azure:
     needs: docker-build-push
-    if: github.event_name == 'push' && secrets.AZURE_CREDENTIALS != ''
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
+      - name: Check Azure Credentials
+        id: check-creds
+        env:
+          AZURE_CREDS: ${{ secrets.AZURE_CREDENTIALS }}
+        run: |
+          if [ -z "$AZURE_CREDS" ]; then
+            echo "has_creds=false" >> "$GITHUB_OUTPUT"
+            echo "AZURE_CREDENTIALS non configure. Deploiement Azure ignore pour ce push."
+          else
+            echo "has_creds=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Azure Login
+        if: steps.check-creds.outputs.has_creds == 'true'
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Deploy API Gateway
+        if: steps.check-creds.outputs.has_creds == 'true'
         run: |
           az containerapp update \
             --name tritux-gateway \
@@ -193,6 +207,7 @@ jobs:
             --image ${{ secrets.DOCKERHUB_USERNAME }}/tritux-api-gateway:latest
 
       - name: Deploy User Service
+        if: steps.check-creds.outputs.has_creds == 'true'
         run: |
           az containerapp update \
             --name tritux-user-svc \
@@ -200,6 +215,7 @@ jobs:
             --image ${{ secrets.DOCKERHUB_USERNAME }}/tritux-user-service:latest
 
       - name: Deploy Ticket Service
+        if: steps.check-creds.outputs.has_creds == 'true'
         run: |
           az containerapp update \
             --name tritux-ticket-svc \
@@ -207,6 +223,7 @@ jobs:
             --image ${{ secrets.DOCKERHUB_USERNAME }}/tritux-ticket-service:latest
 
       - name: Deploy Contract Service
+        if: steps.check-creds.outputs.has_creds == 'true'
         run: |
           az containerapp update \
             --name tritux-contract-svc \
@@ -214,6 +231,7 @@ jobs:
             --image ${{ secrets.DOCKERHUB_USERNAME }}/tritux-contract-service:latest
 
       - name: Deploy Report Service
+        if: steps.check-creds.outputs.has_creds == 'true'
         run: |
           az containerapp update \
             --name tritux-report-svc \
@@ -221,6 +239,7 @@ jobs:
             --image ${{ secrets.DOCKERHUB_USERNAME }}/tritux-report-service:latest
 
       - name: Deploy AI Service
+        if: steps.check-creds.outputs.has_creds == 'true'
         run: |
           az containerapp update \
             --name tritux-ai-svc \
@@ -228,6 +247,7 @@ jobs:
             --image ${{ secrets.DOCKERHUB_USERNAME }}/tritux-ai-service:latest
 
       - name: Deploy Frontend
+        if: steps.check-creds.outputs.has_creds == 'true'
         run: |
           az containerapp update \
             --name tritux-frontend \
