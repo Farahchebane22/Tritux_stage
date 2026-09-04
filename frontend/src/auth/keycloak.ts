@@ -1,12 +1,17 @@
 import Keycloak from 'keycloak-js';
 
-const enabled = import.meta.env.VITE_KEYCLOAK_ENABLED === 'true';
+const getEnv = (key: string, def = ''): string =>
+  (typeof window !== 'undefined' && (window as any).__RUNTIME_CONFIG__?.[key]) ||
+  (import.meta.env as any)[key] ||
+  def;
+
+const enabled = getEnv('VITE_KEYCLOAK_ENABLED', 'false') === 'true';
 
 const keycloak = enabled
   ? new Keycloak({
-      url: import.meta.env.VITE_KEYCLOAK_URL || 'http://localhost:8081',
-      realm: import.meta.env.VITE_KEYCLOAK_REALM || 'tritux-helpdesk',
-      clientId: import.meta.env.VITE_KEYCLOAK_CLIENT_ID || 'tritux-frontend',
+      url: getEnv('VITE_KEYCLOAK_URL', 'http://localhost:8081'),
+      realm: getEnv('VITE_KEYCLOAK_REALM', 'tritux-helpdesk'),
+      clientId: getEnv('VITE_KEYCLOAK_CLIENT_ID', 'tritux-frontend'),
     })
   : null;
 
@@ -42,9 +47,9 @@ export async function keycloakLogin() {
   await keycloak.login({ redirectUri: window.location.origin + '/' });
 }
 
-const KEYCLOAK_BASE_URL = import.meta.env.VITE_KEYCLOAK_URL || 'http://localhost:8081';
-const KEYCLOAK_REALM_NAME = import.meta.env.VITE_KEYCLOAK_REALM || 'tritux-helpdesk';
-const KEYCLOAK_CLIENT_ID = import.meta.env.VITE_KEYCLOAK_CLIENT_ID || 'tritux-frontend';
+const KEYCLOAK_BASE_URL = getEnv('VITE_KEYCLOAK_URL', 'http://localhost:8081');
+const KEYCLOAK_REALM_NAME = getEnv('VITE_KEYCLOAK_REALM', 'tritux-helpdesk');
+const KEYCLOAK_CLIENT_ID = getEnv('VITE_KEYCLOAK_CLIENT_ID', 'tritux-frontend');
 
 export interface DirectGrantTokens {
   access_token: string;

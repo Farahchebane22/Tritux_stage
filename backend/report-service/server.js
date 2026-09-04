@@ -67,6 +67,9 @@ const dbConfig = {
   user: process.env.DB_USER || 'tritux_user',
   password: process.env.DB_PASSWORD || 'tritux_password',
   database: process.env.DB_NAME || 'tritux_db',
+  ssl: (process.env.DB_SSL === 'true' || (process.env.DB_HOST && process.env.DB_HOST.includes('azure')))
+    ? { rejectUnauthorized: false }
+    : undefined,
 };
 
 let pool = null;

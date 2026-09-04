@@ -19,6 +19,8 @@ RUN npm run build
 # Production stage
 FROM nginx:stable-alpine AS production-stage
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY 40-env-config.sh /docker-entrypoint.d/40-env-config.sh
+RUN chmod +x /docker-entrypoint.d/40-env-config.sh
 COPY --from=build-stage /app/dist /usr/share/nginx/html
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]

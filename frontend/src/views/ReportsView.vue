@@ -142,7 +142,10 @@ const error = ref('');
 const last = ref<any>(null);
 const archives = ref<any[]>([]);
 
-const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const apiBase =
+  (typeof window !== 'undefined' && (window as any).__RUNTIME_CONFIG__?.VITE_API_URL) ||
+  import.meta.env.VITE_API_URL ||
+  'http://localhost:5000/api';
 const downloadUrl = computed(() =>
   last.value?.id ? `${apiBase}/reports/${last.value.id}/download` : '#'
 );

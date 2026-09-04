@@ -3,4 +3,4 @@ COPY realm-tritux-helpdesk.json /opt/keycloak/data/import/realm-tritux-helpdesk.
 ENV KC_HTTP_ENABLED=true
 ENV KC_HOSTNAME_STRICT=false
 ENV KC_PROXY_HEADERS=xforwarded
-CMD ["start-dev", "--import-realm"]
+ENTRYPOINT ["/opt/keycloak/bin/kc.sh", "start-dev", "--import-realm", "--hostname-strict=false"]

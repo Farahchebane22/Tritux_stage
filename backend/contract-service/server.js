@@ -30,6 +30,9 @@ const dbConfig = {
   database: process.env.DB_NAME || 'tritux_db',
   waitForConnections: true,
   connectionLimit: 10,
+  ssl: (process.env.DB_SSL === 'true' || (process.env.DB_HOST && process.env.DB_HOST.includes('azure')))
+    ? { rejectUnauthorized: false }
+    : undefined,
 };
 
 let pool = null;

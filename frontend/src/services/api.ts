@@ -4,7 +4,10 @@ import type { Ticket, TicketStatus, TicketPriority, TicketCategory, Comment, Not
 import { splitAgentsByCategory } from '../utils/agentCategories';
 import { decodeJwtPayload, keycloakRefreshToken, isKeycloakEnabled } from '../auth/keycloak';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_BASE_URL =
+  (typeof window !== 'undefined' && (window as any).__RUNTIME_CONFIG__?.VITE_API_URL) ||
+  import.meta.env.VITE_API_URL ||
+  'http://localhost:5000/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
