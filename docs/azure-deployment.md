@@ -16,13 +16,13 @@ Ouvre **PowerShell**, colle ce bloc en remplaçant les valeurs marquées `<...>`
 ```powershell
 # --- Variables ---
 $RG = "tritux-rg"
-$LOCATION = "francecentral"          # change en "westeurope" si erreur de région
+$LOCATION = "spaincentral"          # région autorisée par la souscription ESPRIT
 $ENV_NAME = "tritux-env"
-$DOCKERHUB_USER = "<ton-pseudo-dockerhub>"
-$MYSQL_NAME = "tritux-mysql-<mets-un-suffixe-unique>"   # doit être unique dans tout Azure
+$DOCKERHUB_USER = "foufa68"
+$MYSQL_NAME = "tritux-mysql-foufa2026"
 $MYSQL_ADMIN = "tritux_admin"
-$MYSQL_PASSWORD = "<choisis-un-mot-de-passe-fort>"
-$JWT_SECRET = "<un-secret-aleatoire-long>"
+$MYSQL_PASSWORD = "<ton-mot-de-passe-mysql-fort>"
+$JWT_SECRET = "<ton-secret-jwt-aleatoire-long>"
 $TWILIO_SID = "<ton-account-sid>"
 $TWILIO_TOKEN = "<ton-auth-token>"
 $TWILIO_PHONE = "<ton-numero-twilio>"
@@ -40,7 +40,7 @@ az mysql flexible-server create `
   --sku-name Standard_B1ms `
   --tier Burstable `
   --storage-size 20 `
-  --version 8.0 `
+  --version 8.0.21 `
   --public-access 0.0.0.0-255.255.255.255
 
 az mysql flexible-server db create `

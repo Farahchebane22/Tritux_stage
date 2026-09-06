@@ -3,8 +3,16 @@ name: Tritux Ticketing Platform CI/CD Pipeline
 on:
   push:
     branches: [ "main", "master" ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
   pull_request:
     branches: [ "main", "master" ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
 
 jobs:
   # 1. Continuous Integration (Lint, Typecheck, Build Test)
@@ -88,11 +96,16 @@ jobs:
   #   DOCKERHUB_USERNAME = ton nom d'utilisateur Docker Hub
   #   DOCKERHUB_TOKEN    = un Access Token Docker Hub (PAS ton mot de passe —
   #                        généré sur hub.docker.com > Account Settings > Security)
+  #
+  # IMPORTANT : chaque image est taguée à la fois "latest" ET avec le SHA du
+  # commit (${{ github.sha }}). Azure Container Apps ne crée une nouvelle
+  # révision que si la chaîne de l'image change — utiliser toujours "latest"
+  # au déploiement fait croire à Azure que "rien n'a changé" et il ne
+  # re-télécharge jamais la nouvelle image. Le job deploy-azure déploie donc
+  # le tag SHA (unique à chaque commit), pas "latest".
   docker-build-push:
     needs: [ci-frontend, ci-backend-services, ci-python-ai]
     runs-on: ubuntu-latest
-    # Ne pousse réellement les images que sur main/master (une PR ne fait que builder,
-    # pas pousser — évite de polluer Docker Hub avec des images de branches de test).
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
@@ -112,14 +125,18 @@ jobs:
         with:
           context: ./frontend
           push: ${{ github.event_name == 'push' }}
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/tritux-frontend:latest
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/tritux-frontend:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/tritux-frontend:${{ github.sha }}
 
       - name: Build & Push API Gateway Image
         uses: docker/build-push-action@v5
         with:
           context: ./backend/api-gateway
           push: ${{ github.event_name == 'push' }}
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/tritux-api-gateway:latest
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/tritux-api-gateway:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/tritux-api-gateway:${{ github.sha }}
 
       # Les 4 services ci-dessous partagent backend/shared/auth.js : le contexte
       # de build DOIT être ./backend (pas leur sous-dossier), sinon COPY échoue.
@@ -129,7 +146,9 @@ jobs:
           context: ./backend
           file: ./backend/user-service/Dockerfile
           push: ${{ github.event_name == 'push' }}
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/tritux-user-service:latest
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/tritux-user-service:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/tritux-user-service:${{ github.sha }}
 
       - name: Build & Push Ticket Service Image
         uses: docker/build-push-action@v5
@@ -137,7 +156,9 @@ jobs:
           context: ./backend
           file: ./backend/ticket-service/Dockerfile
           push: ${{ github.event_name == 'push' }}
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/tritux-ticket-service:latest
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/tritux-ticket-service:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/tritux-ticket-service:${{ github.sha }}
 
       - name: Build & Push Contract Service Image
         uses: docker/build-push-action@v5
@@ -145,7 +166,9 @@ jobs:
           context: ./backend
           file: ./backend/contract-service/Dockerfile
           push: ${{ github.event_name == 'push' }}
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/tritux-contract-service:latest
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/tritux-contract-service:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/tritux-contract-service:${{ github.sha }}
 
       - name: Build & Push Report Service Image
         uses: docker/build-push-action@v5
@@ -153,26 +176,33 @@ jobs:
           context: ./backend
           file: ./backend/report-service/Dockerfile
           push: ${{ github.event_name == 'push' }}
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/tritux-report-service:latest
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/tritux-report-service:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/tritux-report-service:${{ github.sha }}
 
       - name: Build & Push AI Service Image
         uses: docker/build-push-action@v5
         with:
           context: ./backend/ai-service
           push: ${{ github.event_name == 'push' }}
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/tritux-ai-service:latest
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/tritux-ai-service:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/tritux-ai-service:${{ github.sha }}
 
       - name: Build & Push Keycloak Image (realm pré-importé)
         uses: docker/build-push-action@v5
         with:
           context: ./keycloak
           push: ${{ github.event_name == 'push' }}
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/tritux-keycloak:latest
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/tritux-keycloak:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/tritux-keycloak:${{ github.sha }}
 
   # 3. Déploiement continu sur Azure Container Apps.
-  # Met à jour les Container Apps EXISTANTES avec la dernière image poussée.
-  # Ne crée RIEN : les apps doivent d'abord exister (voir docs/azure-deployment.md,
-  # script de provisionnement initial à lancer une seule fois à la main).
+  # Met à jour les Container Apps EXISTANTES avec le tag SHA unique de ce
+  # commit (jamais ":latest" — voir l'explication ci-dessus). Ne crée RIEN :
+  # les apps doivent d'abord exister (voir docs/azure-deployment.md, script
+  # de provisionnement initial à lancer une seule fois à la main).
   # Nécessite le secret GitHub AZURE_CREDENTIALS (JSON d'un service principal,
   # voir docs/azure-deployment.md §2).
   deploy-azure:
@@ -204,7 +234,7 @@ jobs:
           az containerapp update \
             --name tritux-gateway \
             --resource-group tritux-rg \
-            --image ${{ secrets.DOCKERHUB_USERNAME }}/tritux-api-gateway:latest
+            --image ${{ secrets.DOCKERHUB_USERNAME }}/tritux-api-gateway:${{ github.sha }}
 
       - name: Deploy User Service
         if: steps.check-creds.outputs.has_creds == 'true'
@@ -212,7 +242,7 @@ jobs:
           az containerapp update \
             --name tritux-user-svc \
             --resource-group tritux-rg \
-            --image ${{ secrets.DOCKERHUB_USERNAME }}/tritux-user-service:latest
+            --image ${{ secrets.DOCKERHUB_USERNAME }}/tritux-user-service:${{ github.sha }}
 
       - name: Deploy Ticket Service
         if: steps.check-creds.outputs.has_creds == 'true'
@@ -220,7 +250,7 @@ jobs:
           az containerapp update \
             --name tritux-ticket-svc \
             --resource-group tritux-rg \
-            --image ${{ secrets.DOCKERHUB_USERNAME }}/tritux-ticket-service:latest
+            --image ${{ secrets.DOCKERHUB_USERNAME }}/tritux-ticket-service:${{ github.sha }}
 
       - name: Deploy Contract Service
         if: steps.check-creds.outputs.has_creds == 'true'
@@ -228,7 +258,7 @@ jobs:
           az containerapp update \
             --name tritux-contract-svc \
             --resource-group tritux-rg \
-            --image ${{ secrets.DOCKERHUB_USERNAME }}/tritux-contract-service:latest
+            --image ${{ secrets.DOCKERHUB_USERNAME }}/tritux-contract-service:${{ github.sha }}
 
       - name: Deploy Report Service
         if: steps.check-creds.outputs.has_creds == 'true'
@@ -236,7 +266,7 @@ jobs:
           az containerapp update \
             --name tritux-report-svc \
             --resource-group tritux-rg \
-            --image ${{ secrets.DOCKERHUB_USERNAME }}/tritux-report-service:latest
+            --image ${{ secrets.DOCKERHUB_USERNAME }}/tritux-report-service:${{ github.sha }}
 
       - name: Deploy AI Service
         if: steps.check-creds.outputs.has_creds == 'true'
@@ -244,7 +274,7 @@ jobs:
           az containerapp update \
             --name tritux-ai-svc \
             --resource-group tritux-rg \
-            --image ${{ secrets.DOCKERHUB_USERNAME }}/tritux-ai-service:latest
+            --image ${{ secrets.DOCKERHUB_USERNAME }}/tritux-ai-service:${{ github.sha }}
 
       - name: Deploy Frontend
         if: steps.check-creds.outputs.has_creds == 'true'
@@ -252,4 +282,4 @@ jobs:
           az containerapp update \
             --name tritux-frontend \
             --resource-group tritux-rg \
-            --image ${{ secrets.DOCKERHUB_USERNAME }}/tritux-frontend:latest
+            --image ${{ secrets.DOCKERHUB_USERNAME }}/tritux-frontend:${{ github.sha }}

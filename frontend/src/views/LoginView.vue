@@ -181,10 +181,15 @@
 
             <button
               type="submit"
-              class="w-full py-2.5 rounded-lg text-sm font-semibold text-white transition-all duration-150 hover:opacity-90 active:scale-[0.98] mt-2 cursor-pointer"
+              :disabled="loading"
+              class="w-full py-2.5 rounded-lg text-sm font-semibold text-white transition-all duration-150 hover:opacity-90 active:scale-[0.98] mt-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               style="background: linear-gradient(135deg, #1D4ED8 0%, #7C3AED 100%)"
             >
-              {{ mode === 'login' ? 'Se connecter' : "Créer mon compte" }}
+              <svg v-if="loading" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span>{{ loading ? 'Connexion en cours…' : (mode === 'login' ? 'Se connecter' : "Créer mon compte") }}</span>
             </button>
 
             <p v-if="keycloakOn" class="text-[10px] text-center text-slate-400 mt-2">
@@ -219,6 +224,7 @@ const authStore = useAuthStore();
 const keycloakOn = isKeycloakEnabled();
 
 const mode = ref<'login' | 'register'>('login');
+const loading = ref(false);
 const showPw = ref(false);
 const email = ref('');
 const password = ref('');
@@ -236,6 +242,7 @@ const features = [
 
 const handleSubmit = async () => {
   errorMsg.value = '';
+  loading.value = true;
   try {
     if (mode.value === 'register') {
       await apiService.registerSociete({
@@ -257,6 +264,8 @@ const handleSubmit = async () => {
     router.push('/');
   } catch (e: any) {
     errorMsg.value = e?.response?.data?.message || 'Connexion impossible. Vérifiez vos identifiants.';
+  } finally {
+    loading.value = false;
   }
 };
 </script>

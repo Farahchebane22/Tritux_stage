@@ -205,6 +205,43 @@ async function getSociete(id) {
   return rows[0] || null;
 }
 
+async function resolveLocalUserId(reqUser) {
+  if (useMock || !pool) return reqUser.id;
+  try {
+    const [byId] = await pool.query('SELECT id FROM users WHERE id = ?', [reqUser.id]);
+    if (byId[0]) return byId[0].id;
+
+    if (reqUser.keycloakId) {
+      const [byKc] = await pool.query('SELECT id FROM users WHERE keycloak_id = ?', [reqUser.keycloakId]);
+      if (byKc[0]) return byKc[0].id;
+    }
+
+    if (reqUser.email) {
+      const [byEmail] = await pool.query('SELECT id FROM users WHERE email = ?', [reqUser.email]);
+      if (byEmail[0]) return byEmail[0].id;
+    }
+
+    const newId = `u_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    await pool.query(
+      'INSERT INTO users (id, name, email, role, department, joinDate, societe_id, keycloak_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        newId,
+        reqUser.name || reqUser.email || 'Utilisateur',
+        reqUser.email || `${newId}@inconnu.local`,
+        mapLegacyRole(reqUser.role) || 'CLIENT_USER',
+        null,
+        new Date().toISOString().split('T')[0],
+        reqUser.societeId || null,
+        reqUser.keycloakId || null,
+      ]
+    );
+    return newId;
+  } catch (e) {
+    console.warn('[Contract Service] resolveLocalUserId a échoué, repli sur req.user.id:', e.message);
+    return reqUser.id;
+  }
+}
+
 /** Access gate for clients */
 app.get('/access/status', authenticateToken, async (req, res) => {
   try {
@@ -252,15 +289,16 @@ app.get('/access/status', authenticateToken, async (req, res) => {
     // Check if already accepted this session (optional query sessionId)
     const sessionId = req.query.sessionId || req.headers['x-session-id'];
     let alreadyAcked = false;
+    const localUserId = await resolveLocalUserId(req.user);
     if (sessionId) {
       if (useMock) {
         alreadyAcked = mockAcceptances.some(
-          (a) => a.user_id === req.user.id && a.contrat_id === contrat.id && a.session_id === sessionId
+          (a) => (a.user_id === req.user.id || a.user_id === localUserId) && a.contrat_id === contrat.id && a.session_id === sessionId
         );
       } else {
         const [acks] = await pool.query(
           'SELECT id FROM contrat_acceptances WHERE user_id = ? AND contrat_id = ? AND session_id = ? LIMIT 1',
-          [req.user.id, contrat.id, sessionId]
+          [localUserId, contrat.id, sessionId]
         );
         alreadyAcked = acks.length > 0;
       }
@@ -300,12 +338,13 @@ app.post('/access/acknowledge', authenticateToken, async (req, res) => {
   try {
     const { contratId, sessionId } = req.body;
     if (!contratId) return res.status(400).json({ message: 'contratId requis' });
+    const localUserId = await resolveLocalUserId(req.user);
     const id = `ack_${Date.now()}`;
     const now = new Date().toISOString();
     if (useMock) {
       mockAcceptances.push({
         id,
-        user_id: req.user.id,
+        user_id: localUserId,
         contrat_id: contratId,
         accepted_at: now,
         session_id: sessionId || null,
@@ -314,11 +353,12 @@ app.post('/access/acknowledge', authenticateToken, async (req, res) => {
       await pool.query(
         `INSERT INTO contrat_acceptances (id, user_id, contrat_id, accepted_at, session_id)
          VALUES (?, ?, ?, ?, ?)`,
-        [id, req.user.id, contratId, now, sessionId || null]
+        [id, localUserId, contratId, now, sessionId || null]
       );
     }
     res.json({ ok: true, acceptedAt: now });
   } catch (err) {
+    console.error('[Contract Service] Error acknowledge:', err);
     res.status(500).json({ message: err.message });
   }
 });
