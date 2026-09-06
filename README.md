@@ -1,160 +1,40 @@
-# Tritux Helpdesk — SaaS B2B multi-clients + SLA
+# Dossier Documentaire Officiel — Plateforme SaaS Tritux Helpdesk
 
-Plateforme de gestion de tickets IT (Vue 3 + microservices Node.js + FastAPI + MySQL + Keycloak),
-étendue en **offre publique** : sociétés clientes sous **contrat de maintenance**, accès conditionné par **SLA**.
+Ce dossier regroupe l'ensemble des documents techniques, architecturaux, fonctionnels et de démonstration relatifs au projet **Tritux Helpdesk — Plateforme SaaS B2B Multi-Clients & Gestion des SLA**.
 
-## Architecture
+Ces documents sont prêts à être partagés avec votre encadrant de stage, votre tuteur entreprise et les membres du jury de soutenance.
 
-```
-landing/                 Site vitrine public (:3000 Docker)
-frontend/                App Vue 3 protégée (:5173 / :8080)
-backend/
-  api-gateway/           :5000
-  user-service/          :5001 — users, sync Keycloak
-  ticket-service/        :5002 — tickets + appel SLA
-  contract-service/      :5003 — contrats, gate, moteur SLA  ← NOUVEAU
-  report-service/        :5004 — rapports archivés           ← NOUVEAU
-  shared/auth.js         JWT Keycloak + fallback legacy
-ai-service/              :8000 — ML + chatbot + cyber
-keycloak/                Realm tritux-helpdesk (:8081)
-database/init.sql        Schéma multi-tenant + seeds
-```
+---
 
-## Fonctionnalités conservées
+## 📑 Sommaire des Documents
 
-Tickets, commentaires, pièces jointes, notifications, satisfaction, chatbot IA, analyse cyber,
-affectation par spécialité — **toujours actives**.
+| Document | Titre | Description |
+|---|---|---|
+| 🏛️ [**ARCHITECTURE.md**](file:///c:/Users/farah/Desktop/stage_ete_tritux/docs/ARCHITECTURE.md) | **Architecture Globale & Topologie Système** | Diagrammes Mermaid de l'architecture microservices, réseau public/privé, modèle de données multi-tenant (ERD), matrice de sécurité RBAC. |
+| 🛠️ [**TECHNOLOGIES_ET_OUTILS.md**](file:///c:/Users/farah/Desktop/stage_ete_tritux/docs/TECHNOLOGIES_ET_OUTILS.md) | **Technologies, Outils & Justifications** | Détail de la stack complète (Vue 3, TypeScript, Node.js, FastAPI, Keycloak, Azure Container Apps, MySQL, Twilio) et analyse comparative justifiant chaque choix technique. |
+| 🤖 [**INTELLIGENCE_ARTIFICIELLE.md**](file:///c:/Users/farah/Desktop/stage_ete_tritux/docs/INTELLIGENCE_ARTIFICIELLE.md) | **Intelligence Artificielle & Pipeline ML** | Conception de l'IA hybride : modèle de Machine Learning supervisé local (TF-IDF + Naive Bayes), chatbot d'auto-assistance, moteur heuristique cyber et intégration LLM. |
+| 🔄 [**WORKFLOWS_FONCTIONNELS_ET_TECHNIQUES.md**](file:///c:/Users/farah/Desktop/stage_ete_tritux/docs/WORKFLOWS_FONCTIONNELS_ET_TECHNIQUES.md) | **Workflows Fonctionnels & Séquences** | 7 diagrammes de séquence détaillant les flux : onboarding société, login Keycloak OIDC, Contract Gate, calcul SLA, escalade 3 paliers, traitement agent et rapports. |
+| 🎯 [**GUIDE_DEMONSTRATION_ET_SOUTENANCE.md**](file:///c:/Users/farah/Desktop/stage_ete_tritux/docs/GUIDE_DEMONSTRATION_ET_SOUTENANCE.md) | **Guide de Démonstration, Soutenance & FAQ** | Script de présentation oral minuté, comptes démo en production, guide pas-à-pas des captures d'écran et réponses aux questions pièges du jury. |
+| ☁️ [**azure-deployment.md**](file:///c:/Users/farah/Desktop/stage_ete_tritux/docs/azure-deployment.md) | **Guide de Déploiement Cloud Azure** | Commandes Azure CLI, variables d'environnement de production, secrets GitHub Actions et gestion des coûts. |
 
-## Nouveautés SaaS
+---
 
-| Module | Description |
-|--------|-------------|
-| Multi-tenant | `societes`, `applications`, `contrats_maintenance`, `sla_regles` |
-| Keycloak | OIDC + PKCE (`tritux-frontend`), rôles `super-admin`, `agent-it`, `client-admin`, `client-user` |
-| Gate contrat | Clients sans contrat → écran blocage ; avec contrat → récap obligatoire |
-| Moteur SLA | Deadline, différé hors fenêtre, escalade mock (SMS/tél) |
-| Rapports | Génération + archive par société (`/reports`) |
-| Landing | `landing/index.html` + route `/welcome` |
+## 🚀 Liens de Production en Ligne
 
-## Variables d'environnement
+L'application est actuellement déployée et opérationnelle en production sur **Microsoft Azure (Région Spain Central)** :
 
-### Frontend (`frontend/.env`)
+- **Application Web (Frontend)** :  
+  `https://tritux-frontend.greenhill-794a15cc.spaincentral.azurecontainerapps.io`
+- **Serveur d'Authentification Keycloak (Admin Console & Realm)** :  
+  `https://tritux-keycloak.greenhill-794a15cc.spaincentral.azurecontainerapps.io`
+- **API Gateway (Point d'accès API public sécurisé)** :  
+  `https://tritux-gateway.greenhill-794a15cc.spaincentral.azurecontainerapps.io`
 
-```env
-VITE_API_URL=http://localhost:5000/api
-VITE_KEYCLOAK_ENABLED=false          # true pour SSO Keycloak
-VITE_KEYCLOAK_URL=http://localhost:8081
-VITE_KEYCLOAK_REALM=tritux-helpdesk
-VITE_KEYCLOAK_CLIENT_ID=tritux-frontend
-```
+---
 
-### Backend (tous services Node)
+## 👤 Comptes de Test Rapide pour la Démonstration
 
-```env
-JWT_SECRET=tritux_secret_key_12345
-KEYCLOAK_ENABLED=true                # false = JWT legacy uniquement
-KEYCLOAK_URL=http://localhost:8081   # en Docker: http://keycloak:8080
-KEYCLOAK_REALM=tritux-helpdesk
-DB_HOST=localhost
-DB_USER=tritux_user
-DB_PASSWORD=tritux_password
-DB_NAME=tritux_db
-CONTRACT_SERVICE_URL=http://localhost:5003   # ticket-service
-```
-
-## Démarrage local (sans Keycloak — défaut)
-
-1. XAMPP MySQL → importer `database/init.sql` (ou `migrate_saas.sql` si BDD déjà créée)
-2. Backends :
-
-```powershell
-cd backend\user-service; npm install; npm start
-cd backend\ticket-service; npm install; npm start
-cd backend\contract-service; npm install; npm start
-cd backend\report-service; npm install; npm start
-cd backend\api-gateway; npm start
-cd backend\ai-service; python main.py
-```
-
-3. Frontend :
-
-```powershell
-cd frontend
-npm install
-# garder VITE_KEYCLOAK_ENABLED=false
-npm run dev
-```
-
-→ App : http://localhost:5173/welcome  
-→ Landing statique : ouvrir `landing/index.html`
-
-### Comptes démo (login legacy)
-
-| Email | Rôle |
-|-------|------|
-| admin@tritux.com | SUPER_ADMIN |
-| leila.mansour@tritux.com | AGENT_IT |
-| nour.benali@acme.tn | CLIENT_ADMIN (soc Acme + contrat 5/7) |
-| sami.belhadj@tritux.com | CLIENT_USER (soc Acme) |
-
-## Keycloak (optionnel)
-
-```powershell
-docker compose up keycloak -d
-```
-
-Console admin : http://localhost:8081 (`admin` / `admin`)  
-Realm importé : `tritux-helpdesk`
-
-Puis dans `frontend/.env` :
-
-```env
-VITE_KEYCLOAK_ENABLED=true
-```
-
-Comptes seed Keycloak (voir `keycloak/realm-tritux-helpdesk.json`) :
-
-| User | Password | Rôle |
-|------|----------|------|
-| admin@tritux.com | admin123 | super-admin |
-| leila.mansour@tritux.com | agent123 | agent-it |
-| nour.benali@acme.tn | client123 | client-admin |
-| sami.belhadj@tritux.com | user123 | client-user |
-
-## Docker complet
-
-```powershell
-docker compose up --build
-```
-
-- App : http://localhost:8080  
-- Landing : http://localhost:3000  
-- Keycloak : http://localhost:8081  
-- API : http://localhost:5000/health  
-
-Variables : copier `.env.example` vers `.env`.
-
-## CI/CD et Azure
-
-Un seul fichier : `.github/workflows/ci-cd.yml`
-
-- **CI** (chaque PR / push) : frontend, 5 services Node, IA, `docker compose config`, build des 7 images.
-- **CD** (push `main` / `master`) : Azure Container Apps (ACR + MySQL + Keycloak + tous les services). Secrets : voir `docs/AZURE_DEPLOY.md`.
-
-## Flux client (contrat)
-
-1. Auth Keycloak / legacy  
-2. `GET /api/contracts/access/status`  
-3. Pas de contrat → `/contract/none`  
-4. Contrat actif → `/contract/recap` → ack journalisé → dashboard  
-5. Création ticket → `POST /api/contracts/sla/evaluate` → `sla_deadline` / badge différé  
-
-## Notification urgente (mock)
-
-Interface : `NotificationService.sendUrgentAlert` dans `contract-service`  
-Remplacer le mock par Twilio / SMS plus tard sans changer le contrat d’appel.
-
-## Phase cloud
-
-CI + CD Azure Container Apps : `.github/workflows/ci-cd.yml`  
-Secrets GitHub : `docs/AZURE_DEPLOY.md`.
+- **Super Administrateur** : `admin `
+- **Agent Support IT** : `leila.mansour `
+- **Client Acme (Contrat 5/7 avec SLA différé)** : `nour.benali`
+- **Client Orange (Contrat critique 24/7 avec escalade d'urgence)** : `nour.orange `
